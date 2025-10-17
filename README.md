@@ -1,14 +1,26 @@
-<img src="assets/img/icon_code.png" alt="Icon: Code" width="100"/>
+## Benchmarking sampling techniques for imbalance graph learning in anti-money laundering
+### Research objectives:
+The objective of this thesis is to study the current literature on sampling meth-
+ods for graph representation learning and analyse their effect on models for
+anti-money laundering.
+### Description
+Networks are a natural representation for many real-life problems, one of which
+is transaction networks. Transactions and clients are often monitored using their
+relationships with each other. On these transaction networks, many graph learn-
+ing methods have been applied to try and fight money laundering [1]. Money
+laundering is a specific form of financial fraud in which illegally obtained money
+goes through multiple transactions and intermediaries to obscure the source of
+the money and make it appear legitimate.
+One of the problems hindering the development of potent detection models
+is that fraud is uncommen and concealed, making the label distribution very
+unbalanced [2]. Often, fewer than 1% of transactions are labelled as money
+laundering. Previous research by Zhu et al. [3] has show that there are different
+aspects influencing the power of sampling.
+The aim of this thesis is to extend the work done by Deprez et al. [1], by pro-
+viding a comprehensive review of sampling methods for network representation
+learning and to study their effect on the performance on anti-money laundering
+models.
 
-# Generic Project Template
-
-This repo is a generic project template. Fork or copy this repo for any new projects that you are doing.  
-The repo contains a folder structure and sample files to illustrate its use.  
-Some of these sample files can of course be used for your project, so do not dump them.  
-
-Happy coding,  
-Chris  
-(PhD of Wouter Verbeke, 2021-2024)
 
 
 
