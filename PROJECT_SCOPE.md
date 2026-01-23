@@ -1,87 +1,179 @@
-# Project Scope: Supervised Graph Learning with Sampling Techniques
+# Project Scope: Supervised Graph Learning with Class Imbalance & Sampling Techniques
 
 ## Overview
-This project benchmarks sampling techniques for imbalanced graph learning in anti-money laundering (AML) detection, focusing exclusively on **supervised learning methods**.
+This project systematically evaluates the impact of **class imbalance ratios** and **sampling techniques** on supervised graph-based methods for anti-money laundering (AML) detection. The research validates the APATE hypothesis that a 2:1 (majority:minority) ratio is optimal for AML fraud detection.
 
-## Supervised Methods (6 approaches)
+## Research Hypothesis
 
-### Feature-Based Methods
+**APATE Finding**: A 2:1 majority:minority class ratio is optimal for AML fraud detection.
+
+**Validation Approach**: Three-nested-loop evaluation:
+1. **Ratio Loop** (Outer): Test different imbalance levels (original, 2:1, 1:1)
+2. **Method Loop** (Middle): Train all 8 supervised methods
+3. **Sampling Loop** (Inner): Apply appropriate sampling techniques (3 variants per method)
+
+**Total Combinations**: 3 ratios × 8 methods × 3 sampling techniques = **72 independent trainings**
+
+## Supervised Methods (8 total)
+
+### Feature-Based Methods (2)
 1. **Intrinsic Features** - Uses node intrinsic properties with a neural decoder
 2. **Positional Features** - Uses PageRank and other positional metrics with a neural decoder
-3. **Node2Vec Embeddings** - Random walk-based graph embeddings trained via Word2Vec
-4. **DeepWalk** - Graph embeddings variant (similar to Node2Vec with p=q=1)
 
-### Graph Neural Networks (GNNs)
+### Embedding-Based Methods (2)
+3. **DeepWalk** - Random walk-based graph embeddings (p=q=1)
+4. **Node2Vec** - Optimized random walk embeddings (p=1.5, q=1.0)
+
+### Graph Neural Networks (4)
 5. **GCN** - Graph Convolutional Network
 6. **GraphSAGE** - Graph SAmple and aggreGatE
-7. **GAT** - Graph Attention Network (optional)
-8. **GIN** - Graph Isomorphism Network (optional)
+7. **GAT** - Graph Attention Network
+8. **GIN** - Graph Isomorphism Network
+
+## Class Imbalance Ratios
+
+The pipeline tests three different majority:minority ratios:
+
+- **None (Original)**: Dataset's natural imbalance (baseline)
+- **2.0 (2:1 ratio)**: 2 majority samples per 1 minority sample (APATE recommendation)
+- **1.0 (1:1 ratio)**: Fully balanced dataset
+
+**Implementation**: `adjust_mask_to_ratio()` undersamples majority class to achieve target ratio
 
 ## Sampling Techniques
 
-The pipeline applies **two sampling strategies** uniformly across all methods:
+### For Feature-Based Methods (Intrinsic & Positional)
+1. **None** - Use the ratio-adjusted dataset directly
+2. **Random Undersampling (RUS)** - Additional undersampling to 1:1 ratio
+3. **SMOTE** - Synthetic Minority Over-sampling in feature space
 
-- **No Sampling** (baseline): Use original imbalanced training set
-- **Random Undersample Majority**: Randomly subsample majority class to match minority class size
+### For GNN Methods (DeepWalk, Node2Vec, GCN, SAGE, GAT, GIN)
+1. **None** - Use the ratio-adjusted dataset directly
+2. **Random Undersampling (RUS)** - Additional undersampling to 1:1 ratio
+3. **GraphSMOTE** - Synthetic Minority Over-sampling using graph structure
 
 ## Pipeline Architecture
 
-### Training (`scripts/train_supervised.py`)
-- Loads dataset (IBM or Elliptic Bitcoin)
-- Applies sampling strategy to training masks
-- Uses **Optuna** for hyperparameter optimization
-- Trains each method with sampled training data
-- Saves optimized hyperparameters to `res/` directory
+### Main Training Script (`scripts/train_supervised.py`)
 
-### Evaluation (`scripts/test_supervised.py`)
-- Loads trained model hyperparameters
-- Evaluates on test set with the same sampling strategy used during training
-- Computes Average Precision (AP) scores
-- Aggregates results across all methods and sampling strategies
+**Workflow**:
+```
+Load Dataset (IBM or Elliptic)
+  ↓
+For each Ratio in [None, 2.0, 1.0]:
+  Adjust training mask to target ratio
+  ↓
+  For each Method in [intrinsic, positional, deepwalk, node2vec, gcn, sage, gat, gin]:
+    ↓
+    For each Sampling in [none, random_undersample, smote/graph_smote]:
+      Apply sampling technique
+      Train method with sampled data
+      Save result: res/{method}_params_{dataset}_{ratio_tag}_{sampling_tag}.txt
+```
+
+**Key Components**:
+- `adjust_mask_to_ratio()` - Ratio adjustment via undersampling
+- `random_undersample_mask()` - RUS implementation
+- `smote_mask()` - SMOTE for feature-based methods
+- `graph_smote_mask()` - GraphSMOTE for GNN methods
+
+### Result File Organization
+
+Results saved with naming convention:
+```
+res/{method}_params_{dataset}_{ratio_tag}_{sampling_tag}.txt
+```
+
+**Example Results**:
+- `intrinsic_params_ibm_original.txt` - Intrinsic, original ratio, no sampling
+- `intrinsic_params_ibm_original_rus.txt` - Intrinsic, original ratio, RUS
+- `intrinsic_params_ibm_original_smote.txt` - Intrinsic, original ratio, SMOTE
+- `gcn_params_ibm_ratio_1to2.txt` - GCN, 2:1 ratio, no sampling
+- `gcn_params_ibm_ratio_1to2_rus.txt` - GCN, 2:1 ratio, RUS
+- `gcn_params_ibm_ratio_1to2_graph_smote.txt` - GCN, 2:1 ratio, GraphSMOTE
+
+**Total Output**: 72 result files (3 ratios × 8 methods × 3 sampling techniques)
 
 ## Key Implementation Details
 
 ### Environment Setup
-- Python 3.10 (conda environment)
+- Python 3.10 (conda environment: `aml`)
 - PyTorch 2.x with PyTorch Geometric
-- Optuna for hyperparameter tuning
 - macOS-specific: OMP_NUM_THREADS=1 to avoid OpenMP conflicts
-- Optuna forced to single-process (OPTUNA_N_JOBS=1) to prevent joblib SIGKILL on Apple Silicon
 
-### Sampling Implementation
-- `random_undersample_mask()` in `src/methods/evaluation.py`
-- Applied at training time via `random_undersample_mask(mask, y)` 
-- Same mask used during test evaluation for consistency
+### Data Handling
+- Training set: Adjusted via `adjust_mask_to_ratio()` based on current ratio
+- Validation/Test set: Unchanged (original split for fair comparison)
+- Features: Node attributes + positional encodings (method-dependent)
+- Edge structure: Preserved for GNN methods
 
-### Node2Vec Robustness
-- `node2vec_representation_torch()` in `src/methods/utils/functionsTorch.py`
-- Includes fallback: retries with `workers=1` if multi-worker mode fails
-- Handles macOS libomp conflicts gracefully
+### Hyperparameters
+
+**Feature-Based Methods**:
+- `n_layers_decoder`: 2
+- `hidden_dim_decoder`: 16
+- `lr`: 0.05
+- `n_epochs_decoder`: 100
+
+**Embedding-Based Methods**:
+- `embedding_dim`: 32
+- `walk_length`: 5
+- `context_size`: 3
+- `walks_per_node`: 2
+- `n_epochs`: 50
+
+**GNN Methods**:
+- `hidden_dim`: 128
+- `embedding_dim`: 64
+- `n_layers`: 2
+- `dropout_rate`: 0.3
+- `n_epochs`: 100
+
+**Sampling Methods**:
+- `k_neighbors`: 5 (for SMOTE/GraphSMOTE)
+- `random_state`: 42 (for reproducibility)
 
 ## Removed Components
 
-The following unsupervised-only code has been removed to simplify the codebase:
-- `scripts/train_unsupervised.py` - Deleted
-- `scripts/test_unsupervised.py` - Deleted
-- `src/methods/experiments_unsupervised.py` - Deleted
-- All unsupervised result files in `res/` - Deleted
+- `isolation_forest.py` - Deleted (unused anomaly detection code)
+- Unsupervised training scripts - Simplified to supervised-only
 
-## Expected Output
+## Expected Outputs & Analysis
 
-Hyperparameter results stored as:
+### Phase 1: Training (Current)
+- Generate 72 result files with AUC-PRC scores
+- Organize results by: ratio, method, sampling technique
+
+### Phase 2: Analysis (Post-Training)
+- Compare performance across ratios to validate APATE hypothesis
+- Identify optimal ratio for AML fraud detection
+- Analyze sampling technique effectiveness per method type
+- Determine if feature-based and GNN methods respond differently to sampling
+
+## Files Structure
+
 ```
-res/{dataset_name}_{method_name}_{sampling_strategy}.txt
-```
+scripts/
+  └── train_supervised.py          # Main training orchestrator
 
-Example:
-```
-res/IBM_gcn_random_undersample.txt
-res/IBM_intrinsic_none.txt
-res/elliptic_node2vec_random_undersample.txt
-```
+src/
+  ├── methods/
+  │   ├── experiments_supervised.py # All training functions
+  │   ├── evaluation.py            # Sampling & ratio adjustment
+  │   └── utils/
+  │       ├── GNN.py              # Model definitions
+  │       ├── functionsTorch.py    # PyTorch utilities
+  │       ├── functionsNetworkX.py # NetworkX utilities
+  │       └── functionsNetworKit.py # NetworKit utilities
+  └── utils/
+      └── Network.py              # Network data structure
 
-## Next Steps
+data/
+  └── DatasetConstruction.py       # Dataset loaders (IBM, Elliptic)
 
-1. Run `python scripts/train_supervised.py` to optimize hyperparameters
-2. Run `python scripts/test_supervised.py` to evaluate all methods
-3. Analyze results to determine which sampling technique benefits each method
+res/
+  └── {method}_params_{dataset}_{ratio}_{sampling}.txt  # Results
+
+ARCHITECTURE.md                     # Detailed system architecture
+PROJECT_SCOPE.md                    # This file
+```

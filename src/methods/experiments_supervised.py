@@ -12,8 +12,6 @@ from src.methods.utils.functionsNetworKit import *
 
 from src.methods.utils.functionsTorch import *
 
-from src.methods.utils.isolation_forest  import *
-
 from src.methods.utils.GNN import *
 
 from src.utils.Network import *
