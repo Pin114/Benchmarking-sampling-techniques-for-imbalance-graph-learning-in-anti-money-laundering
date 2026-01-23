@@ -1,0 +1,766 @@
+import os 
+import sys
+import torch
+import optuna
+
+# ---------------- Environment Setup ----------------
+os.environ["OMP_NUM_THREADS"] = "1"
+OPTUNA_N_JOBS = 1
+
+DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(DIR + "/../")
+sys.path.append(DIR + "/../")
+SRC_PATH = os.path.abspath(os.path.join(DIR, '..', 'src'))
+if SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
+
+from src.methods.experiments_supervised import *
+from data.DatasetConstruction import *
+from src.methods.evaluation import random_undersample_mask, smote_mask, graph_smote_mask, adjust_mask_to_ratio 
+
+#### Optuna objective ####
+def objective_intrinsic(trial, train_mask_sampled):
+    n_layers_decoder = trial.suggest_int('n_layers_decoder', 1, 3)
+    hidden_dim_decoder = trial.suggest_int('hidden_dim_decoder', 5, 20)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs_decoder = trial.suggest_int('n_epochs_decoder', 5, 500)
+
+    ap_loss = intrinsic_features(
+        ntw, 
+        train_mask_sampled, # 使用採樣後的 Mask
+        val_mask,
+        n_layers_decoder, 
+        hidden_dim_decoder, 
+        lr, 
+        n_epochs_decoder
+        )
+    return(ap_loss)
+
+def objective_positional(trial, train_mask_sampled):
+    alpha_pr = trial.suggest_float('alpha_pr', 0.1, 0.9)
+    alpha_ppr = 0#trial.suggest_float('alpha_ppr', 0.1, 0.9)
+    n_epochs_decoder = trial.suggest_int('n_epochs_decoder', 5, 100)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_layers_decoder = trial.suggest_int('n_layers_decoder', 1, 3)
+    hidden_dim_decoder = trial.suggest_int('hidden_dim_decoder', 5, 20)
+
+    ap_loss = positional_features(
+        ntw, 
+        train_mask_sampled, # 使用採樣後的 Mask
+        val_mask,
+        alpha_pr, 
+        alpha_ppr,
+        n_epochs_decoder,
+        lr,
+        fraud_dict_test=fraud_dict,
+        n_layers_decoder=n_layers_decoder,
+        hidden_dim_decoder=hidden_dim_decoder, 
+        ntw_name=ntw_name+"_train"
+        )
+    return(ap_loss)
+
+def objective_deepwalk(trial, train_mask_sampled):
+    embedding_dim = trial.suggest_int('embedding_dim', 2, 64)
+    walk_length = trial.suggest_int('walk_length', 3, 10)
+    context_size = trial.suggest_int('context_size', 2, walk_length)
+    walks_per_node = trial.suggest_int('walks_per_node', 1, 3)
+    num_negative_samples = trial.suggest_int('num_negative_samples', 1, 5)
+    p = 1
+    q = 1
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 100)
+    n_epochs_decoder = trial.suggest_int('n_epochs_decoder', 5, 100)
+
+    ap_loss = node2vec_features(
+        ntw_torch, 
+        train_mask_sampled, # 使用採樣後的 Mask
+        val_mask,
+        embedding_dim, 
+        walk_length, 
+        context_size,
+        walks_per_node,
+        num_negative_samples,
+        p,
+        q,
+        lr,
+        n_epochs,
+        n_epochs_decoder, 
+        use_torch=True
+        )
+    return(ap_loss)
+
+
+def objective_node2vec(trial, train_mask_sampled):
+    embedding_dim = trial.suggest_int('embedding_dim', 2, 64)
+    walk_length = trial.suggest_int('walk_length', 3, 10)
+    context_size = trial.suggest_int('context_size', 2, walk_length)
+    walks_per_node = trial.suggest_int('walks_per_node', 1, 3)
+    num_negative_samples = trial.suggest_int('num_negative_samples', 1, 5)
+    p = trial.suggest_float('p', 0.5, 2)
+    q = trial.suggest_float('q', 0.5, 2)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 100)
+    n_epochs_decoder = trial.suggest_int('n_epochs_decoder', 5, 100)
+
+    ap_loss = node2vec_features(
+        ntw_torch, 
+        train_mask_sampled, # 使用採樣後的 Mask
+        val_mask,
+        embedding_dim, 
+        walk_length, 
+        context_size,
+        walks_per_node,
+        num_negative_samples,
+        p,
+        q,
+        lr,
+        n_epochs,
+        n_epochs_decoder, 
+        ntw_nx=ntw.get_network_nx(),
+        use_torch=False
+        )
+    return(ap_loss)
+
+def objective_gcn(trial, train_mask_sampled):
+    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
+    embedding_dim = trial.suggest_int('embedding_dim', 32, 128)
+    n_layers = trial.suggest_int('n_layers', 1, 3)
+    dropout_rate = trial.suggest_float('dropout_rate', 0, 0.5)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 500)
+
+    model_gcn = GCN(
+        edge_index=edge_index, 
+        num_features=num_features,
+        hidden_dim=hidden_dim,
+        embedding_dim=embedding_dim,
+        output_dim=output_dim,
+        n_layers=n_layers,
+        dropout_rate=dropout_rate
+        ).to(device)
+    # 使用採樣後的 Mask 進行訓練
+    ap_loss = GNN_features(ntw_torch, model_gcn, lr, n_epochs, train_mask=train_mask_sampled, test_mask=val_mask)
+    return(ap_loss)
+
+def objective_sage(trial, train_mask_sampled):
+    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
+    embedding_dim = trial.suggest_int('embedding_dim', 32, 128)
+    n_layers = trial.suggest_int('n_layers', 1, 3)
+    dropout_rate = trial.suggest_float('dropout_rate', 0, 0.5)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 500)
+
+    sage_aggr = trial.suggest_categorical('sage_aggr', ["min","mean","max"])
+
+    model_sage = GraphSAGE(
+        edge_index=edge_index, 
+        num_features=num_features,
+        hidden_dim=hidden_dim,
+        embedding_dim=embedding_dim,
+        output_dim=output_dim,
+        n_layers=n_layers,
+        dropout_rate=dropout_rate,
+        sage_aggr=sage_aggr
+    ).to(device)
+
+    # 使用採樣後的 Mask 進行訓練
+    ap_loss = GNN_features(ntw_torch, model_sage, lr, n_epochs, train_mask=train_mask_sampled, test_mask=val_mask)
+    return(ap_loss)
+
+def objective_gat(trial, train_mask_sampled):
+    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
+    embedding_dim = trial.suggest_int('embedding_dim', 32, 128)
+    n_layers = trial.suggest_int('n_layers', 1, 3)
+    dropout_rate = trial.suggest_float('dropout_rate', 0, 0.5)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 500)
+
+    heads = trial.suggest_int("heads", 1, 5)
+
+    model_gat = GAT(
+        num_features=num_features,
+        hidden_dim=hidden_dim,
+        embedding_dim=embedding_dim,
+        output_dim=output_dim,
+        n_layers=n_layers,
+        heads=heads,
+        dropout_rate=dropout_rate
+    ).to(device)
+
+    # 使用採樣後的 Mask 進行訓練
+    ap_loss = GNN_features(ntw_torch, model_gat, lr, n_epochs, train_mask=train_mask_sampled, test_mask=val_mask)
+    return(ap_loss)
+
+def objective_gin(trial, train_mask_sampled):
+    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
+    embedding_dim = trial.suggest_int('embedding_dim', 32, 128)
+    n_layers = trial.suggest_int('n_layers', 1, 3)
+    dropout_rate = trial.suggest_float('dropout_rate', 0, 0.5)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 500)
+
+    model_gin = GIN(
+                    num_features=num_features,
+                    hidden_dim=hidden_dim,
+                    embedding_dim=embedding_dim,
+                    output_dim=output_dim,
+                    n_layers=n_layers,
+                    dropout_rate=dropout_rate
+                ).to(device)
+    
+    # 使用採樣後的 Mask 進行訓練
+    ap_loss = GNN_features(ntw_torch, model_gin, lr, n_epochs, train_mask=train_mask_sampled, test_mask=val_mask)
+    return(ap_loss)
+
+#### SMOTE-based objectives ####
+def objective_intrinsic_smote(trial, X_train_smote, y_train_smote):
+    n_layers_decoder = trial.suggest_int('n_layers_decoder', 1, 3)
+    hidden_dim_decoder = trial.suggest_int('hidden_dim_decoder', 5, 20)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs_decoder = trial.suggest_int('n_epochs_decoder', 5, 500)
+
+    ap_loss = intrinsic_features_smote(
+        ntw, 
+        train_mask,  # 原始 mask
+        val_mask,
+        n_layers_decoder, 
+        hidden_dim_decoder, 
+        lr, 
+        n_epochs_decoder,
+        k_neighbors=5,
+        random_state=42
+    )
+    return(ap_loss)
+
+def objective_positional_smote(trial, train_mask_sampled):
+    alpha_pr = trial.suggest_float('alpha_pr', 0.1, 0.9)
+    alpha_ppr = 0
+    n_epochs_decoder = trial.suggest_int('n_epochs_decoder', 5, 100)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_layers_decoder = trial.suggest_int('n_layers_decoder', 1, 3)
+    hidden_dim_decoder = trial.suggest_int('hidden_dim_decoder', 5, 20)
+
+    ap_loss = positional_features_smote(
+        ntw, 
+        train_mask,  # 原始 mask
+        val_mask,
+        alpha_pr, 
+        alpha_ppr,
+        n_epochs_decoder,
+        lr,
+        fraud_dict_train=fraud_dict,
+        fraud_dict_test=fraud_dict,
+        n_layers_decoder=n_layers_decoder,
+        hidden_dim_decoder=hidden_dim_decoder, 
+        ntw_name=ntw_name+"_train",
+        k_neighbors=5,
+        random_state=42
+    )
+    return(ap_loss)
+
+#### GraphSMOTE-based objectives ####
+def objective_gcn_graphsmote(trial, train_mask_sampled):
+    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
+    embedding_dim = trial.suggest_int('embedding_dim', 32, 128)
+    n_layers = trial.suggest_int('n_layers', 1, 3)
+    dropout_rate = trial.suggest_float('dropout_rate', 0, 0.5)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 500)
+
+    model_gcn = GCN(
+        edge_index=edge_index, 
+        num_features=num_features,
+        hidden_dim=hidden_dim,
+        embedding_dim=embedding_dim,
+        output_dim=output_dim,
+        n_layers=n_layers,
+        dropout_rate=dropout_rate
+    ).to(device)
+    
+    ap_loss = GNN_features_graphsmote(
+        ntw_torch, model_gcn, lr, n_epochs, 
+        train_mask=train_mask, test_mask=val_mask,
+        k_neighbors=5, random_state=42
+    )
+    return(ap_loss)
+
+def objective_sage_graphsmote(trial, train_mask_sampled):
+    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
+    embedding_dim = trial.suggest_int('embedding_dim', 32, 128)
+    n_layers = trial.suggest_int('n_layers', 1, 3)
+    dropout_rate = trial.suggest_float('dropout_rate', 0, 0.5)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 500)
+
+    model_sage = GraphSAGE(
+        num_features=num_features,
+        hidden_dim=hidden_dim,
+        embedding_dim=embedding_dim,
+        output_dim=output_dim,
+        n_layers=n_layers,
+        dropout_rate=dropout_rate
+    ).to(device)
+    
+    ap_loss = GNN_features_graphsmote(
+        ntw_torch, model_sage, lr, n_epochs, 
+        train_mask=train_mask, test_mask=val_mask,
+        k_neighbors=5, random_state=42
+    )
+    return(ap_loss)
+
+def objective_gat_graphsmote(trial, train_mask_sampled):
+    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
+    embedding_dim = trial.suggest_int('embedding_dim', 32, 128)
+    n_layers = trial.suggest_int('n_layers', 1, 3)
+    dropout_rate = trial.suggest_float('dropout_rate', 0, 0.5)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 500)
+    heads = trial.suggest_int("heads", 1, 5)
+
+    model_gat = GAT(
+        num_features=num_features,
+        hidden_dim=hidden_dim,
+        embedding_dim=embedding_dim,
+        output_dim=output_dim,
+        n_layers=n_layers,
+        heads=heads,
+        dropout_rate=dropout_rate
+    ).to(device)
+
+    ap_loss = GNN_features_graphsmote(
+        ntw_torch, model_gat, lr, n_epochs, 
+        train_mask=train_mask, test_mask=val_mask,
+        k_neighbors=5, random_state=42
+    )
+    return(ap_loss)
+
+def objective_gin_graphsmote(trial, train_mask_sampled):
+    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
+    embedding_dim = trial.suggest_int('embedding_dim', 32, 128)
+    n_layers = trial.suggest_int('n_layers', 1, 3)
+    dropout_rate = trial.suggest_float('dropout_rate', 0, 0.5)
+    lr = trial.suggest_float('lr', 0.01, 0.1)
+    n_epochs = trial.suggest_int('n_epochs', 5, 500)
+
+    model_gin = GIN(
+        num_features=num_features,
+        hidden_dim=hidden_dim,
+        embedding_dim=embedding_dim,
+        output_dim=output_dim,
+        n_layers=n_layers,
+        dropout_rate=dropout_rate
+    ).to(device)
+
+    ap_loss = GNN_features_graphsmote(
+        ntw_torch, model_gin, lr, n_epochs, 
+        train_mask=train_mask, test_mask=val_mask,
+        k_neighbors=5, random_state=42
+    )
+    return(ap_loss)
+
+if __name__ == "__main__":
+    ### Load Dataset ###
+    ntw_name = "ibm"
+    n_trials = 5
+    
+    # ========== 第一步：定義要測試的 Class Imbalance Ratios ==========
+    # ratio = majority_count / minority_count
+    # 1.0 表示 1:1 (平衡)
+    # 2.0 表示 1:2 (APATE 論文建議)
+    # None 表示保持原始不平衡
+    test_ratios = [
+        None,    # Original imbalance (baseline from dataset)
+        2.0,     # 1:2 ratio (APATE findings suggest this is optimal for AML)
+        1.0      # 1:1 ratio (fully balanced)
+    ]
+    
+    ratio_names = {
+        None: "original",
+        2.0: "ratio_1to2",
+        1.0: "ratio_1to1"
+    }
+
+    if ntw_name == "ibm":
+        ntw = load_ibm()
+    elif ntw_name == "elliptic":
+        ntw = load_elliptic()
+    else:
+        raise ValueError("Network not found")
+
+    original_train_mask, val_mask, test_mask = ntw.get_masks()
+    
+    # ========== 第二步：定義採樣 Techniques ==========
+    # 在每個 ratio 下應用不同的採樣技術
+    sampling_techniques = [
+        "none",                  # No sampling (baseline)
+        "random_undersample",    # Random undersampling of majority
+        "smote_intrinsic",       # SMOTE for Intrinsic features
+        "smote_positional",      # SMOTE for Positional features
+        "graphsmote_gcn",        # GraphSMOTE for GCN
+        "graphsmote_sage",       # GraphSMOTE for GraphSAGE
+        "graphsmote_gat",        # GraphSMOTE for GAT
+        "graphsmote_gin"         # GraphSMOTE for GIN
+    ]
+    
+    to_train = [
+        "intrinsic",
+        "positional",
+        "deepwalk",
+        "node2vec",
+        "gcn",
+        "sage",
+        "gat",
+        "gin"
+    ]
+    
+    # --- 數據準備 (在所有迴圈外) ---
+    fraud_dict = ntw.get_fraud_dict()
+    # 修正: 確保 fraud_dict 只有 0/1 類別，避免 Cora 等數據集的問題
+    fraud_dict = {k: 0 if v == 2 else v for k, v in fraud_dict.items()}
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    ntw_torch = ntw.get_network_torch().to(device)
+    if ntw_name == "elliptic":
+        ntw_torch.x = ntw_torch.x[:,1:94] # Remove time_step and summary features
+    
+    # 針對 GNN 模型的參數準備
+    if hasattr(ntw_torch, 'edge_index'):
+        edge_index = ntw_torch.edge_index
+    else:
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+        
+    num_features = ntw_torch.num_features
+    output_dim = 2
+    
+    # ========== 第三步：開始 Ratio 迴圈 - 逐個測試各個 imbalance ratios ==========
+    for ratio in test_ratios:
+        ratio_tag = ratio_names[ratio]
+        
+        print("\n" + "="*70)
+        print(f"PHASE 1: Testing Class Imbalance Ratio: {ratio_tag.upper()}")
+        if ratio is None:
+            print("  (Using original dataset imbalance)")
+        else:
+            print(f"  (Adjusting to {ratio} ratio - majority:minority)")
+        print("="*70)
+        
+        # 根據 ratio 調整 training mask
+        if ratio is None:
+            train_mask_ratio = original_train_mask
+        else:
+            train_mask_ratio, orig_maj, orig_min, new_maj = adjust_mask_to_ratio(
+                original_train_mask, ntw_torch.y.cpu(), 
+                target_ratio=ratio, random_state=42
+            )
+            train_mask_ratio = train_mask_ratio.to(original_train_mask.device)
+            print(f"  Adjusted training set: {new_maj} majority + {orig_min} minority = {new_maj + orig_min} samples")
+            print(f"  (Original: {orig_maj} majority + {orig_min} minority = {orig_maj + orig_min} samples)")
+        
+        # ========== 第四步：在此 ratio 下，開始採樣技術迴圈 ==========
+        for sampling in sampling_techniques:
+            print("\n" + "-"*70)
+            print(f"  Sampling Technique: {sampling.upper()}")
+            print("-"*70)
+            
+            # 設置tag用於結果檔案名稱
+            if sampling == 'none':
+                samp_tag = ''
+            else:
+                samp_tag = f'_{sampling}'
+            
+            result_tag = f"{ntw_name}_{ratio_tag}{samp_tag}"
+            
+            # ========== 基礎採樣 (none 和 random_undersample) ==========
+            if sampling == "none":
+                train_mask = train_mask_ratio
+                train_mask_sampled = train_mask_ratio
+            
+            # 訓練基礎方法 (不含SMOTE/GraphSMOTE)
+            if "intrinsic" in to_train:
+                print("="*10)
+                print("intrinsic: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_intrinsic(trial, train_mask_sampled), n_trials=n_trials)
+                intrinsic_params = study.best_params   
+                intrinsic_values = study.best_value
+                with open(f"res/intrinsic_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(intrinsic_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(intrinsic_values))
+
+            if "positional" in to_train:
+                print("="*10)
+                print("positional: ")
+                study = optuna.create_study(direction='maximize')
+                try:
+                    study.optimize(lambda trial: objective_positional(trial, train_mask_sampled), n_trials=n_trials)
+                    positional_params = study.best_params
+                    positional_values = study.best_value
+                    with open(f"res/positional_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                        f.write(str(positional_params))
+                        f.write("\n")
+                        f.write("AUC-PRC: "+str(positional_values))
+                except KeyError as e:
+                    print(f"[Warning] Positional optimization failed due to KeyError: {e}. Skipping.")
+
+            if "deepwalk" in to_train:
+                print("="*10)
+                print("deepwalk: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_deepwalk(trial, train_mask_sampled), n_trials=n_trials)
+                deepwalk_params = study.best_params
+                deepwalk_values = study.best_value
+                with open(f"res/deepwalk_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(deepwalk_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(deepwalk_values))
+
+            if "node2vec" in to_train:
+                print("="*10)
+                print("node2vec: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_node2vec(trial, train_mask_sampled), n_trials=n_trials)
+                node2vec_params = study.best_params
+                node2vec_values = study.best_value
+                with open(f"res/node2vec_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(node2vec_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(node2vec_values))
+
+            if "gcn" in to_train:     
+                print("="*10)      
+                print("GCN: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_gcn(trial, train_mask_sampled), n_trials=n_trials)
+                gcn_params = study.best_params
+                gcn_values = study.best_value
+                with open(f"res/gcn_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(gcn_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(gcn_values))
+                                
+            if "sage" in to_train:
+                print("="*10)
+                print("GraphSAGE: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_sage(trial, train_mask_sampled), n_trials=n_trials)
+                sage_params = study.best_params
+                sage_values = study.best_value
+                with open(f"res/sage_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(sage_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(sage_values))
+
+            if "gat" in to_train:
+                print("="*10)
+                print("GAT: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_gat(trial, train_mask_sampled), n_trials=n_trials)
+                gat_params = study.best_params
+                gat_values = study.best_value
+                with open(f"res/gat_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(gat_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(gat_values))
+
+            if "gin" in to_train:
+                print("="*10)
+                print("GIN: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_gin(trial, train_mask_sampled), n_trials=n_trials)
+                gin_params = study.best_params
+                gin_values = study.best_value
+                with open(f"res/gin_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(gin_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(gin_values))
+
+        elif sampling == "random_undersample":
+            # 應用random undersampling
+            mask_to_pass = original_train_mask.contiguous().view(-1)
+            train_mask_sampled = random_undersample_mask(mask_to_pass, ntw_torch.y.cpu(), target_ratio=1.0)
+            train_mask_sampled = train_mask_sampled.to(original_train_mask.device)
+            train_mask = original_train_mask
+            
+            # 訓練基礎方法 (使用undersampled mask)
+            if "intrinsic" in to_train:
+                print("="*10)
+                print("intrinsic: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_intrinsic(trial, train_mask_sampled), n_trials=n_trials)
+                intrinsic_params = study.best_params   
+                intrinsic_values = study.best_value
+                with open(f"res/intrinsic_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(intrinsic_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(intrinsic_values))
+
+            if "positional" in to_train:
+                print("="*10)
+                print("positional: ")
+                study = optuna.create_study(direction='maximize')
+                try:
+                    study.optimize(lambda trial: objective_positional(trial, train_mask_sampled), n_trials=n_trials)
+                    positional_params = study.best_params
+                    positional_values = study.best_value
+                    with open(f"res/positional_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                        f.write(str(positional_params))
+                        f.write("\n")
+                        f.write("AUC-PRC: "+str(positional_values))
+                except KeyError as e:
+                    print(f"[Warning] Positional optimization failed due to KeyError: {e}. Skipping.")
+
+            if "deepwalk" in to_train:
+                print("="*10)
+                print("deepwalk: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_deepwalk(trial, train_mask_sampled), n_trials=n_trials)
+                deepwalk_params = study.best_params
+                deepwalk_values = study.best_value
+                with open(f"res/deepwalk_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(deepwalk_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(deepwalk_values))
+
+            if "node2vec" in to_train:
+                print("="*10)
+                print("node2vec: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_node2vec(trial, train_mask_sampled), n_trials=n_trials)
+                node2vec_params = study.best_params
+                node2vec_values = study.best_value
+                with open(f"res/node2vec_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(node2vec_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(node2vec_values))
+
+            if "gcn" in to_train:     
+                print("="*10)      
+                print("GCN: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_gcn(trial, train_mask_sampled), n_trials=n_trials)
+                gcn_params = study.best_params
+                gcn_values = study.best_value
+                with open(f"res/gcn_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(gcn_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(gcn_values))
+                                
+            if "sage" in to_train:
+                print("="*10)
+                print("GraphSAGE: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_sage(trial, train_mask_sampled), n_trials=n_trials)
+                sage_params = study.best_params
+                sage_values = study.best_value
+                with open(f"res/sage_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(sage_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(sage_values))
+
+            if "gat" in to_train:
+                print("="*10)
+                print("GAT: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_gat(trial, train_mask_sampled), n_trials=n_trials)
+                gat_params = study.best_params
+                gat_values = study.best_value
+                with open(f"res/gat_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(gat_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(gat_values))
+
+            if "gin" in to_train:
+                print("="*10)
+                print("GIN: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_gin(trial, train_mask_sampled), n_trials=n_trials)
+                gin_params = study.best_params
+                gin_values = study.best_value
+                with open(f"res/gin_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(gin_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(gin_values))
+
+        # ========== SMOTE-based techniques ==========
+        elif sampling == "smote_intrinsic":
+            if "intrinsic" in to_train:
+                print("="*10)
+                print("intrinsic with SMOTE: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_intrinsic_smote(trial, None, None), n_trials=n_trials)
+                intrinsic_params = study.best_params   
+                intrinsic_values = study.best_value
+                with open(f"res/intrinsic_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(intrinsic_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(intrinsic_values))
+                    
+        elif sampling == "smote_positional":
+            if "positional" in to_train:
+                print("="*10)
+                print("positional with SMOTE: ")
+                study = optuna.create_study(direction='maximize')
+                try:
+                    study.optimize(lambda trial: objective_positional_smote(trial, original_train_mask), n_trials=n_trials)
+                    positional_params = study.best_params
+                    positional_values = study.best_value
+                    with open(f"res/positional_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                        f.write(str(positional_params))
+                        f.write("\n")
+                        f.write("AUC-PRC: "+str(positional_values))
+                except KeyError as e:
+                    print(f"[Warning] Positional SMOTE optimization failed due to KeyError: {e}. Skipping.")
+
+        # ========== GraphSMOTE-based techniques ==========
+        elif sampling == "graphsmote_gcn":
+            if "gcn" in to_train:
+                print("="*10)
+                print("GCN with GraphSMOTE: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_gcn_graphsmote(trial, original_train_mask), n_trials=n_trials)
+                gcn_params = study.best_params
+                gcn_values = study.best_value
+                with open(f"res/gcn_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(gcn_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(gcn_values))
+
+        elif sampling == "graphsmote_sage":
+            if "sage" in to_train:
+                print("="*10)
+                print("GraphSAGE with GraphSMOTE: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_sage_graphsmote(trial, original_train_mask), n_trials=n_trials)
+                sage_params = study.best_params
+                sage_values = study.best_value
+                with open(f"res/sage_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(sage_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(sage_values))
+
+        elif sampling == "graphsmote_gat":
+            if "gat" in to_train:
+                print("="*10)
+                print("GAT with GraphSMOTE: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_gat_graphsmote(trial, original_train_mask), n_trials=n_trials)
+                gat_params = study.best_params
+                gat_values = study.best_value
+                with open(f"res/gat_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(gat_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(gat_values))
+
+        elif sampling == "graphsmote_gin":
+            if "gin" in to_train:
+                print("="*10)
+                print("GIN with GraphSMOTE: ")
+                study = optuna.create_study(direction='maximize')
+                study.optimize(lambda trial: objective_gin_graphsmote(trial, original_train_mask), n_trials=n_trials)
+                gin_params = study.best_params
+                gin_values = study.best_value
+                with open(f"res/gin_params_{ntw_name}{samp_tag}.txt", "w") as f:
+                    f.write(str(gin_params))
+                    f.write("\n")
+                    f.write("AUC-PRC: "+str(gin_values))

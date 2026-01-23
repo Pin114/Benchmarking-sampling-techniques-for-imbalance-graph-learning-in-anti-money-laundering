@@ -11,6 +11,7 @@ if SRC_PATH not in sys.path:
 from utils.Network import network_AML
 from tqdm import tqdm
 
+
 #### Elliptic dataset ####
 def load_elliptic():
     data_dir = os.path.join(ROOT, 'data', 'data', 'elliptic_bitcoin_dataset')
@@ -26,6 +27,7 @@ def load_elliptic():
     columns = {0: 'txId', 1: 'time_step'}
     feat_df = feat_df.rename(columns=columns)
 
+    # 特徵矩陣 x 由 time_step 欄位開始的所有欄位構成，並轉換為 PyTorch 浮點 Tensor
     x = torch.from_numpy(feat_df.loc[:, 'time_step':].values).to(torch.float)
 
     # There exists 3 different classes in the dataset:
@@ -36,6 +38,11 @@ def load_elliptic():
     feat_df["class"] = y
 
     # Timestamp based split:
+    """使用 time_step 欄位進行時間序列分割，並排除未標記 (class=2) 的交易    
+    Train Mask: time_step < 30 且已標記。
+    - Val Mask: 30 <= time_step < 40 且已標記。
+    - Test Mask: time_step >= 40 且已標記。"""
+
     time_step = torch.from_numpy(feat_df['time_step'].values)
     train_mask = (time_step < 30) & (y != 2)
     val_mask = (time_step >= 30) & (time_step < 40) & (y != 2) 
@@ -56,38 +63,49 @@ def preprocess_ibm(num_obs):
     data_df = pd.read_csv(data_path)
     data_df['Timestamp'] = pd.to_datetime(data_df['Timestamp'], format=date_format)
     data_df.sort_values('Timestamp', inplace=True)
-    data_df = data_df[data_df['Account']!= data_df['Account.1']]
+    data_df = data_df[data_df['Account']!= data_df['Account.1']] #載入原始交易數據，按時間排序，並移除自我交易 (Account != Account.1)
     start_index = int(len(data_df)-num_obs)
     data_df = data_df.iloc[start_index:]
     data_df.reset_index(drop=True, inplace=True)
     data_df.reset_index(inplace=True)
 
+    """採用時間窗口方法構建圖：構建一個有向圖 (Directed Graph)，其中節點是交易 (txId)，邊是時間上連續且資金流向正確的交易鏈"""
+
+    #如果交易 A (Account.1) 和交易 B (Account) 之間的時間差小於或等於 delta（預設 4 小時），則從交易 A 到交易 B 建立一條邊
     data_df_accounts = data_df[['index', 'Account', 'Account.1', 'Timestamp']]
     delta = 4*60 # 4 hours
 
     print('Number of observations: ', len(data_df_accounts))
-    pieces = 100
+    pieces = 100 #分塊處理數量。 由於數據量大（50萬筆），為了效率和記憶體管理，程式碼將數據分成 100 個區塊 (chunks) 進行處理
 
     source = []
     target = []
-
+    
+    #tqdm 目的是為 IBM 交易數據集構建圖的邊緣列表（即定義交易之間的關係）。
+    #採用了時間窗口連接 (Sliding Window Join)來識別具有先後繼承關係的交易，從而將原本獨立的交易記錄轉化為Directed Graph: 將連續發生、且資金從一個帳戶流向另一個帳戶的交易識別出來，形成圖中的一條邊
     for i in tqdm(range(pieces)):
         start = i*num_obs//pieces
         end = (i+1)*num_obs//pieces
-        data_df_right = data_df_accounts[start:end]
+        data_df_right = data_df_accounts[start:end] #定義右側窗口 (Current Transactions)。 這是當前主要需要尋找前驅交易的交易數據子集
         min_timestamp = data_df_right['Timestamp'].iloc[0]
         max_timestamp = data_df_right['Timestamp'].iloc[-1]
 
+        """定義左側窗口 (Candidate Predecessor Transactions)。 這是潛在的前驅交易區塊
+        它包含：
+        1. 時間上稍早於 min_timestamp（最多早 delta 時間，即 4 小時）的交易。
+        2. 時間上最晚到 max_timestamp 的所有交易。"""
         data_df_left = data_df_accounts[(data_df_accounts['Timestamp']>=min_timestamp-timedelta(minutes=delta)) & (data_df_accounts['Timestamp']<=max_timestamp)]
-
+        
+        #識別了資金從交易 1 流向交易 2 的潛在路徑
+        #尋找：左側交易的收款帳戶 (Account.1 of _1) == 右側交易的付款帳戶 (Account of _2)
         data_df_join = data_df_left.merge(data_df_right, left_on='Account.1', right_on='Account', suffixes=('_1', '_2'))
 
         for j in range(len(data_df_join)):
             row = data_df_join.iloc[j]
             delta_trans = row['Timestamp_2']-row['Timestamp_1']
             if (delta_trans.days*24*60+delta_trans.seconds/60 <= delta) & (delta_trans.days*24*60+delta_trans.seconds/60 >= 0):
-                source.append(row['index_1'])
-                target.append(row['index_2'])
+                source.append(row['index_1']) #將符合時間和帳戶流動條件的交易索引（即 txId）分別存入 source 和 target 列表，構成了圖的邊緣列表
+                target.append(row['index_2']) #將所有找到的邊緣關係寫入 edges.csv 檔案
 
     edges_out = os.path.join(ROOT, 'data', 'data', 'IBM', 'edges.csv')
     pd.DataFrame({'txId1': source, 'txId2': target}).to_csv(edges_out, index=False)
@@ -95,8 +113,9 @@ def preprocess_ibm(num_obs):
 def load_ibm():
     path = os.path.join(ROOT, 'data', 'data', 'IBM')
 
-    df_features = pd.read_csv(os.path.join(path, 'HI-Small_Trans.csv'))
-    df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], format='%Y/%m/%d %H:%M')
+    df_features = pd.read_csv(os.path.join(path, 'HI-Small_Trans.csv')) 
+    df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], dayfirst=True, errors='coerce') #IBM 時間格式
+#     df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], format='%Y/%m/%d %H:%M') #Elliptic 時間格式
     df_features.sort_values('Timestamp', inplace=True)
     df_features = df_features[df_features['Account']!= df_features['Account.1']]
 

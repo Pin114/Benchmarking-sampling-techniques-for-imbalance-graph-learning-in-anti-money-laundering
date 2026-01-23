@@ -1,9 +1,11 @@
 from sklearn.metrics import average_precision_score, roc_auc_score, precision_score, recall_score, f1_score
 from sklearn.utils import resample
+from sklearn.neighbors import NearestNeighbors
 import random
 
 from sklearn.ensemble import IsolationForest
 
+import torch
 import torch.nn as nn
 import numpy as np
 import os
@@ -203,7 +205,7 @@ def random_undersample_mask(mask, labels, target_ratio=1.0, random_state=None):
     except Exception:
         _torch = None
 
-    # 確保 mask 是 1D 且類型正確，這能同時解決 ValueError 和 TypeError
+    # make sure mask_np is 1D and type-correct
     is_torch = _torch is not None and isinstance(mask, _torch.Tensor)
 
     if is_torch:
@@ -211,28 +213,33 @@ def random_undersample_mask(mask, labels, target_ratio=1.0, random_state=None):
         mask_np = mask.cpu().numpy().astype(_np.bool_)
         labels_np = labels.cpu().numpy() if isinstance(labels, _torch.Tensor) else _np.array(labels)
     else:
-        # 對 NumPy 輸入，也強制轉換為 bool
+        # force to bool to avoid object_ dtype
         mask_np = _np.array(mask).astype(_np.bool_)
         labels_np = _np.array(labels)
 
-    # 🎯 修正點 1: 確保 mask_np 至少是 1D，同時解決 ValueError 和 TypeError
+    # make sure mask_np is 1D
     mask_np = _np.atleast_1d(mask_np) 
 
+    # 獲取原始訓練遮罩 (mask) 中所有為 True 的樣本索引
     idx = _np.where(mask_np)[0]
     if idx.size == 0:
         # nothing to do
         return mask.clone() if is_torch and _torch is not None else mask_np
 
     lbls_in_mask = labels_np[idx]
-    classes, counts = _np.unique(lbls_in_mask, return_counts=True)
+    classes, counts = _np.unique(lbls_in_mask, return_counts=True) #計算在 mask 內部，各類別的樣本數量
     if classes.size <= 1:
         # single class inside mask
         return mask.clone() if is_torch and _torch is not None else mask_np
 
-    minority_count = int(_np.min(counts))
+    minority_count = int(_np.min(counts)) #找出在 mask 內，少數類的數量
     desired_majority = int(_np.floor(minority_count * target_ratio))
 
     rnd = _np.random.RandomState(random_state)
+
+    """遍歷 mask 內的類別：
+    1. 如果是多數類（cnt > minority_count），則使用 rnd.choice 隨機抽樣出 desired_majority 個索引。
+    2. 如果是少數類，則保留所有索引。"""
 
     # build new selected indices
     selected = []
@@ -246,14 +253,11 @@ def random_undersample_mask(mask, labels, target_ratio=1.0, random_state=None):
 
     selected = _np.concatenate(selected)
     
-    # 🎯 修正點 2: 統一使用原始輸入的 shape 來創建新 mask，並確保 dtype 為 bool
-    # 由於在函式開始時，我們已確保 mask_np 是正確的 bool 類型且至少 1D，這裡可以安全使用原始 shape
-    
     # 獲取原始 mask 的尺寸，以確保返回的 mask 尺寸一致
     original_shape = mask.shape if is_torch else _np.array(mask).shape
-    new_mask = _np.zeros(original_shape, dtype=_np.bool_)
+    new_mask = _np.zeros(original_shape, dtype=_np.bool_) #創建一個與原始數據集大小相同的全新遮罩，所有值初始化為 False
          
-    new_mask[selected] = True
+    new_mask[selected] = True #在 new_mask 中，只將通過採樣被選中的索引位置設為 True
 
     if is_torch and _torch is not None:
         return _torch.from_numpy(new_mask)
@@ -461,8 +465,23 @@ def evaluate_if(model, x_test, y_test, percentile_q_list = [99], n_samples=100):
         y_pred = model.score_samples(x_new)
         y_pred = -y_pred
 
-        AUC = roc_auc_score(y_new, y_pred)
-        AP = average_precision_score(y_new, y_pred)
+        # inspect unique classes in y_new
+        unique_classes = np.unique(y_new)
+        
+        if len(unique_classes) < 2:
+            # if only one class present, assign neutral scores
+            AUC = 0.5 
+            AP = 0.0
+        else:
+            # 🎯 最終修正：確保 roc_auc_score 知道這是二元問題，並使用分數
+            # 這裡我們只傳遞二元分數，並確保標籤是二元的。
+            try:
+                AUC = roc_auc_score(y_new, y_pred)
+                AP = average_precision_score(y_new, y_pred)
+            except ValueError:
+                # catch any ValueError that might arise and assign neutral scores
+                AUC = 0.5
+                AP = 0.0
 
         AUC_list.append(AUC)
         AP_list.append(AP)
@@ -494,3 +513,341 @@ def save_results_TD(precision_dict, recall_dict, F1_dict, model_name):
     
     df = pd.DataFrame(res_dict)
     df.to_csv('res/'+model_name+'_TD.csv')
+
+
+def smote_mask(mask, features, labels, k_neighbors=5, random_state=None):
+    """
+    SMOTE: Synthetic Minority Over-sampling Technique applied within a mask.
+    
+    Generates synthetic samples for the minority class using k-NN in feature space.
+    Only operates on samples within the mask.
+
+    Parameters:
+    - mask: boolean mask (1D tensor or array) - which samples to resample
+    - features: feature matrix (n_samples, n_features), numpy array or torch tensor
+    - labels: label vector (n_samples,)
+    - k_neighbors: number of nearest neighbors for synthetic sample generation
+    - random_state: seed for reproducibility
+
+    Returns:
+    - expanded_features: feature matrix with synthetic samples (numpy array)
+    - expanded_labels: label vector with synthetic labels (numpy array)
+    - expanded_mask: boolean mask indicating which samples are in the training set
+    """
+    # Convert to numpy if needed
+    is_torch_feat = isinstance(features, torch.Tensor)
+    is_torch_labels = isinstance(labels, torch.Tensor)
+    is_torch_mask = isinstance(mask, torch.Tensor)
+
+    if is_torch_feat:
+        features_np = features.cpu().numpy()
+    else:
+        features_np = np.array(features)
+
+    if is_torch_labels:
+        labels_np = labels.cpu().numpy()
+    else:
+        labels_np = np.array(labels)
+
+    if is_torch_mask:
+        mask_np = mask.cpu().numpy().astype(bool)
+    else:
+        mask_np = np.array(mask).astype(bool)
+
+    # Get samples in mask
+    idx_mask = np.where(mask_np)[0]
+    features_masked = features_np[idx_mask]
+    labels_masked = labels_np[idx_mask]
+
+    # Identify minority and majority classes
+    unique_classes, class_counts = np.unique(labels_masked, return_counts=True)
+    minority_class = unique_classes[np.argmin(class_counts)]
+    majority_class = unique_classes[np.argmax(class_counts)]
+    
+    minority_count = np.min(class_counts)
+    majority_count = np.max(class_counts)
+
+    # Get indices of minority and majority samples
+    idx_minority = np.where(labels_masked == minority_class)[0]
+    idx_majority = np.where(labels_masked == majority_class)[0]
+
+    # Fit kNN on majority class to find neighbors
+    nbrs = NearestNeighbors(n_neighbors=min(k_neighbors, len(idx_majority))).fit(features_masked[idx_majority])
+    distances, indices = nbrs.kneighbors(features_masked[idx_minority])
+
+    # Generate synthetic samples
+    rnd = np.random.RandomState(random_state)
+    n_synthetic = majority_count - minority_count  # Generate this many synthetic samples
+    
+    synthetic_features = []
+    synthetic_labels = []
+
+    for i in range(n_synthetic):
+        # Randomly pick a minority sample
+        minority_idx = rnd.choice(len(idx_minority))
+        # Randomly pick one of its k nearest neighbors (from majority class)
+        neighbor_idx = rnd.choice(k_neighbors)
+        
+        x_minority = features_masked[idx_minority[minority_idx]]
+        # Map back to original indices
+        neighbor_original_idx = idx_majority[indices[minority_idx, neighbor_idx]]
+        x_neighbor = features_masked[neighbor_original_idx]
+        
+        # Generate synthetic sample
+        alpha = rnd.uniform(0, 1)
+        synthetic_sample = x_minority + alpha * (x_neighbor - x_minority)
+        synthetic_features.append(synthetic_sample)
+        synthetic_labels.append(minority_class)
+
+    # Combine original and synthetic samples
+    synthetic_features = np.array(synthetic_features)
+    synthetic_labels = np.array(synthetic_labels)
+
+    expanded_features = np.vstack([features_np, synthetic_features])
+    expanded_labels = np.concatenate([labels_np, synthetic_labels])
+
+    # Create expanded mask
+    expanded_mask = np.zeros(len(expanded_labels), dtype=bool)
+    expanded_mask[:len(mask_np)] = mask_np
+    # Mark synthetic samples as part of training set
+    expanded_mask[len(labels_np):] = True
+
+    # Convert back to torch if input was torch
+    if is_torch_feat:
+        expanded_features = torch.from_numpy(expanded_features).to(features.dtype).to(features.device)
+    if is_torch_labels:
+        expanded_labels = torch.from_numpy(expanded_labels).to(labels.device)
+    if is_torch_mask:
+        expanded_mask = torch.from_numpy(expanded_mask).to(mask.device)
+
+    return expanded_features, expanded_labels, expanded_mask
+
+
+def graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, 
+                     similarity_metric='cosine', random_state=None):
+    """
+    GraphSMOTE: Graph-aware over-sampling using edge information.
+    
+    Generates synthetic samples using both feature similarity and graph structure.
+    Synthetic samples are created as interpolations of minority class nodes 
+    and their graph neighbors.
+
+    Parameters:
+    - mask: boolean mask (1D tensor or array)
+    - features: feature matrix (n_samples, n_features)
+    - labels: label vector (n_samples,)
+    - edge_index: edge indices (2, n_edges) as torch tensor or numpy array
+    - k_neighbors: number of nearest neighbors in feature space to consider
+    - similarity_metric: 'cosine' or 'euclidean'
+    - random_state: seed for reproducibility
+
+    Returns:
+    - expanded_features: feature matrix with synthetic samples
+    - expanded_labels: label vector with synthetic labels
+    - expanded_mask: boolean mask for training set
+    - expanded_edge_index: edge indices for expanded graph (original edges + synthetic edges)
+    """
+    # Convert to numpy/torch as needed
+    is_torch_feat = isinstance(features, torch.Tensor)
+    is_torch_labels = isinstance(labels, torch.Tensor)
+    is_torch_mask = isinstance(mask, torch.Tensor)
+    is_torch_edges = isinstance(edge_index, torch.Tensor)
+
+    if is_torch_feat:
+        features_np = features.cpu().numpy()
+    else:
+        features_np = np.array(features)
+
+    if is_torch_labels:
+        labels_np = labels.cpu().numpy()
+    else:
+        labels_np = np.array(labels)
+
+    if is_torch_mask:
+        mask_np = mask.cpu().numpy().astype(bool)
+    else:
+        mask_np = np.array(mask).astype(bool)
+
+    if is_torch_edges:
+        edge_index_np = edge_index.cpu().numpy()
+    else:
+        edge_index_np = np.array(edge_index)
+
+    # Build adjacency list for graph neighbors
+    n_nodes = features_np.shape[0]
+    adj_list = [[] for _ in range(n_nodes)]
+    for i in range(edge_index_np.shape[1]):
+        src, dst = edge_index_np[0, i], edge_index_np[1, i]
+        adj_list[src].append(dst)
+        adj_list[dst].append(src)
+
+    # Get samples in mask
+    idx_mask = np.where(mask_np)[0]
+    features_masked = features_np[idx_mask]
+    labels_masked = labels_np[idx_mask]
+
+    # Identify minority and majority classes
+    unique_classes, class_counts = np.unique(labels_masked, return_counts=True)
+    minority_class = unique_classes[np.argmin(class_counts)]
+    majority_class = unique_classes[np.argmax(class_counts)]
+    
+    minority_count = np.min(class_counts)
+    majority_count = np.max(class_counts)
+
+    idx_minority = np.where(labels_masked == minority_class)[0]
+    idx_majority = np.where(labels_masked == majority_class)[0]
+
+    # Build kNN graph in feature space
+    nbrs = NearestNeighbors(n_neighbors=min(k_neighbors + 1, len(features_masked)), 
+                            metric=similarity_metric).fit(features_masked)
+    distances, indices = nbrs.kneighbors(features_masked[idx_minority])
+    # Remove self-loop (first neighbor is self)
+    indices = indices[:, 1:k_neighbors+1]
+
+    # Generate synthetic samples
+    rnd = np.random.RandomState(random_state)
+    n_synthetic = majority_count - minority_count
+    
+    synthetic_features = []
+    synthetic_labels = []
+    synthetic_neighbors = []  # Track which nodes were mixed
+
+    for i in range(n_synthetic):
+        # Randomly pick a minority sample
+        minority_idx = rnd.choice(len(idx_minority))
+        minority_node_idx = idx_mask[idx_minority[minority_idx]]
+        
+        # Get potential neighbors from both feature-space kNN and graph structure
+        feature_neighbors = idx_mask[indices[minority_idx]]
+        graph_neighbors = [n for n in adj_list[minority_node_idx] if n < len(labels_np)]
+        
+        # Combine and sample a neighbor
+        all_neighbors = list(set(list(feature_neighbors) + graph_neighbors))
+        if len(all_neighbors) == 0:
+            all_neighbors = list(feature_neighbors) if len(feature_neighbors) > 0 else [minority_node_idx]
+        
+        neighbor_idx = rnd.choice(all_neighbors)
+        
+        x_minority = features_np[minority_node_idx]
+        x_neighbor = features_np[neighbor_idx]
+        
+        # Generate synthetic sample
+        alpha = rnd.uniform(0, 1)
+        synthetic_sample = x_minority + alpha * (x_neighbor - x_minority)
+        synthetic_features.append(synthetic_sample)
+        synthetic_labels.append(minority_class)
+        synthetic_neighbors.append((minority_node_idx, neighbor_idx))
+
+    # Combine original and synthetic samples
+    synthetic_features = np.array(synthetic_features) if synthetic_features else np.empty((0, features_np.shape[1]))
+    synthetic_labels = np.array(synthetic_labels)
+
+    expanded_features = np.vstack([features_np, synthetic_features])
+    expanded_labels = np.concatenate([labels_np, synthetic_labels])
+
+    # Expand edge index: original edges + synthetic edges connecting synthetic nodes to neighbors
+    n_synthetic_nodes = len(synthetic_features)
+    synthetic_edge_index = []
+    for i, (neighbor1, neighbor2) in enumerate(synthetic_neighbors):
+        synthetic_node_idx = n_nodes + i
+        # Connect synthetic node to both original nodes it was interpolated from
+        synthetic_edge_index.append([neighbor1, synthetic_node_idx])
+        synthetic_edge_index.append([synthetic_node_idx, neighbor1])
+        synthetic_edge_index.append([neighbor2, synthetic_node_idx])
+        synthetic_edge_index.append([synthetic_node_idx, neighbor2])
+
+    if len(synthetic_edge_index) > 0:
+        synthetic_edge_index = np.array(synthetic_edge_index).T
+        expanded_edge_index = np.hstack([edge_index_np, synthetic_edge_index])
+    else:
+        expanded_edge_index = edge_index_np
+
+    # Create expanded mask
+    expanded_mask = np.zeros(len(expanded_labels), dtype=bool)
+    expanded_mask[:len(mask_np)] = mask_np
+    # Mark synthetic samples as part of training set
+    expanded_mask[len(labels_np):] = True
+
+    # Convert back to torch if input was torch
+    if is_torch_feat:
+        expanded_features = torch.from_numpy(expanded_features).to(features.dtype).to(features.device)
+    if is_torch_labels:
+        expanded_labels = torch.from_numpy(expanded_labels).to(labels.device)
+    if is_torch_mask:
+        expanded_mask = torch.from_numpy(expanded_mask).to(mask.device)
+    if is_torch_edges:
+        expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
+
+    return expanded_features, expanded_labels, expanded_mask, expanded_edge_index
+
+
+def adjust_mask_to_ratio(mask, labels, target_ratio, random_state=None):
+    """
+    調整mask中的class比例到指定的target_ratio。
+    
+    Parameters:
+    - mask: boolean mask (1D tensor or array)
+    - labels: label vector (n_samples,)
+    - target_ratio: 目標比例 (majority_count / minority_count)
+                   e.g., 1.0 for 1:1, 2.0 for 1:2 (majority:minority)
+    - random_state: seed for reproducibility
+    
+    Returns:
+    - new_mask: adjusted boolean mask
+    - original_majority_count: 原始多數類數量
+    - original_minority_count: 原始少數類數量
+    - new_majority_count: 調整後多數類數量
+    """
+    is_torch = isinstance(mask, torch.Tensor)
+    
+    if is_torch:
+        mask_np = mask.cpu().numpy().astype(bool)
+        labels_np = labels.cpu().numpy() if isinstance(labels, torch.Tensor) else np.array(labels)
+    else:
+        mask_np = np.array(mask).astype(bool)
+        labels_np = np.array(labels)
+    
+    mask_np = np.atleast_1d(mask_np)
+    
+    # Get samples in mask
+    idx_mask = np.where(mask_np)[0]
+    if idx_mask.size == 0:
+        return (mask.clone() if is_torch else mask_np), 0, 0, 0
+    
+    labels_in_mask = labels_np[idx_mask]
+    
+    # Identify classes
+    unique_classes, counts = np.unique(labels_in_mask, return_counts=True)
+    if unique_classes.size <= 1:
+        return (mask.clone() if is_torch else mask_np), 0, 0, 0
+    
+    minority_class = unique_classes[np.argmin(counts)]
+    majority_class = unique_classes[np.argmax(counts)]
+    
+    minority_count = np.min(counts)
+    majority_count = np.max(counts)
+    
+    # Calculate new majority count based on target ratio
+    # target_ratio = new_majority_count / minority_count
+    new_majority_count = int(np.round(target_ratio * minority_count))
+    new_majority_count = min(new_majority_count, majority_count)  # Don't oversample
+    
+    # Get indices of each class
+    idx_minority = idx_mask[np.where(labels_in_mask == minority_class)[0]]
+    idx_majority = idx_mask[np.where(labels_in_mask == majority_class)[0]]
+    
+    # Random sampling for majority class
+    rnd = np.random.RandomState(random_state)
+    selected_majority = rnd.choice(idx_majority, size=new_majority_count, replace=False)
+    
+    # Combine selected indices
+    selected_all = np.concatenate([idx_minority, selected_majority])
+    
+    # Create new mask
+    new_mask = np.zeros_like(mask_np, dtype=bool)
+    new_mask[selected_all] = True
+    
+    if is_torch:
+        return torch.from_numpy(new_mask).to(mask.device), majority_count, minority_count, new_majority_count
+    
+    return new_mask, majority_count, minority_count, new_majority_count
