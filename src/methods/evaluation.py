@@ -789,7 +789,7 @@ def adjust_mask_to_ratio(mask, labels, target_ratio, random_state=None):
     - mask: boolean mask (1D tensor or array)
     - labels: label vector (n_samples,)
     - target_ratio: 目標比例 (majority_count / minority_count)
-                   e.g., 1.0 for 1:1, 2.0 for 1:2 (majority:minority)
+                   e.g., 1.0 for 1:1, 2.0 for 2:1 (majority:minority)
     - random_state: seed for reproducibility
     
     Returns:

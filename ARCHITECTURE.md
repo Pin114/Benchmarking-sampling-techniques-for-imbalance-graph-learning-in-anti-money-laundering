@@ -11,7 +11,7 @@ The training pipeline implements a systematic approach to evaluate the impact of
 │ Purpose: Test different class imbalance ratios                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │ ├─ ratio = None    → Original dataset imbalance (baseline)           │
-│ ├─ ratio = 2.0     → 1:2 majority:minority (APATE recommendation)   │
+│ ├─ ratio = 2     → 2:1 minority: majority (APATE recommendation)   │
 │ └─ ratio = 1.0     → 1:1 fully balanced                              │
 │                                                                       │
 │ ┌───────────────────────────────────────────────────────────────┐  │
@@ -102,7 +102,7 @@ Original Dataset (IBM/Elliptic)
     ↓
 Ratio Adjustment (adjust_mask_to_ratio)
     ├─ ratio=None   → original_train_mask
-    ├─ ratio=2.0    → adjusted_train_mask (1:2 majority:minority)
+    ├─ ratio=2.0    → adjusted_train_mask (2:1 majority:minority)
     └─ ratio=1.0    → adjusted_train_mask (balanced)
     ↓
 Sampling Technique Application
@@ -126,9 +126,9 @@ res/{method}_params_{dataset}_{ratio_tag}_{sampling_tag}.txt
 **Examples:**
 - `intrinsic_params_ibm_original.txt` - Intrinsic with original ratio, no sampling
 - `intrinsic_params_ibm_original_smote.txt` - Intrinsic with original ratio, SMOTE applied
-- `intrinsic_params_ibm_ratio_1to2.txt` - Intrinsic with 1:2 ratio, no sampling
-- `intrinsic_params_ibm_ratio_1to2_smote.txt` - Intrinsic with 1:2 ratio, SMOTE applied
-- `gcn_params_ibm_ratio_1to2_graph_smote.txt` - GCN with 1:2 ratio, GraphSMOTE applied
+- `intrinsic_params_ibm_ratio_1to2.txt` - Intrinsic with 2:1 ratio, no sampling
+- `intrinsic_params_ibm_ratio_1to2_smote.txt` - Intrinsic with 2:1 ratio, SMOTE applied
+- `gcn_params_ibm_ratio_1to2_graph_smote.txt` - GCN with 2:1 ratio, GraphSMOTE applied
 
 ## Sampling Strategy
 
@@ -203,14 +203,14 @@ for ratio in [None, 2.0, 1.0]:
 ```
 
 **Naming Convention Details:**
-- `ratio_tag`: "original" (None), "ratio_1to2" (2.0), "ratio_1to1" (1.0)
+- `ratio_tag`: "original" (None), "ratio_1to2" (2.0 = 2:1 majority:minority), "ratio_1to1" (1.0 = balanced)
 - `sampling_tag`: "" (none), "rus" (random_undersample), "smote"/"graph_smote"
 - Example: `gcn_params_ibm_ratio_1to2_graph_smote.txt`
 
 ## Key Hyperparameters
 
 **Ratio Adjustment:**
-- Target ratios: None (original), 2.0 (1:2 majority:minority), 1.0 (balanced)
+- Target ratios: None (original), 2.0 (2:1 majority:minority), 1.0 (balanced)
 - Adjustment method: Random undersampling of majority class
 - Random state: 42 (for reproducibility)
 
@@ -278,6 +278,6 @@ res/
 ## Research Hypothesis
 
 Based on APATE (Anti-Money Laundering Pattern Detection) research:
-- **Hypothesis**: A 1:2 majority:minority ratio is optimal for AML fraud detection
+- **Hypothesis**: A 2:1 majority:minority ratio is optimal for AML fraud detection
 - **Validation**: Compare AUC-PRC across ratios to identify the optimal imbalance level
 - **Next Phase**: Once optimal ratio is confirmed, apply advanced sampling techniques to further improve performance
