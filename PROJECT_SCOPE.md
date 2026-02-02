@@ -1,18 +1,42 @@
-# Project Scope: Supervised Graph Learning with Class Imbalance & Sampling Techniques
+# Project Scope: Multi-Dataset Graph Learning with Class Imbalance & Sampling Techniques
 
 ## Overview
-This project systematically evaluates the impact of **class imbalance ratios** and **sampling techniques** on supervised graph-based methods for anti-money laundering (AML) detection. 
+
+This project systematically evaluates the impact of **class imbalance ratios** and **sampling techniques** on supervised graph-based methods for anti-money laundering (AML) detection across **two major datasets**:
+
+1. **Elliptic Bitcoin Dataset** - Large-scale cryptocurrency transaction network
+2. **IBM Transaction Network** - Synthetic banking transaction network
 
 ## Research Hypothesis
 
-**APATE Finding**: A 2:1 majority:minority class ratio is optimal for AML fraud detection.
+**APATE Finding**: A 2:1 majority:minority class ratio is optimal for AML fraud detection across different network types.
 
-**Validation Approach**: Three-nested-loop evaluation:
+**Validation Approach**: Three-nested-loop evaluation on both datasets:
 1. **Ratio Loop** (Outer): Test different imbalance levels (original, 2:1, 1:1)
 2. **Method Loop** (Middle): Train all 8 supervised methods
 3. **Sampling Loop** (Inner): Apply appropriate sampling techniques (3 variants per method)
 
-**Total Combinations**: 3 ratios × 8 methods × 3 sampling techniques = **72 independent trainings**
+**Total Combinations**: 2 datasets × 3 ratios × 8 methods × 3 sampling techniques = **144 independent trainings**
+
+## Datasets
+
+### Elliptic Bitcoin Dataset
+- **Type**: Cryptocurrency transaction network
+- **Size**: 203,769 nodes with time-series splits
+- **Classes**: Licit (0), Illicit (1), Unknown (2)
+- **Time-based splits**:
+  - Training: time_step < 30 (labeled only)
+  - Validation: 30 ≤ time_step < 40 (labeled only)
+  - Test: time_step ≥ 40 (labeled only)
+- **Characteristics**: High variance in method performance, GraphSMOTE very effective
+
+### IBM Transaction Network
+- **Type**: Banking transaction network (synthetic)
+- **Size**: 500K nodes with 41 features
+- **Imbalance**: 1959:1 (severe imbalance)
+- **Classes**: Legitimate (0), Fraudulent (1)
+- **Construction**: Sliding window time-series graph from transaction records
+- **Characteristics**: Low variance, feature-based methods effective, GraphSMOTE less beneficial
 
 ## Supervised Methods (8 total)
 

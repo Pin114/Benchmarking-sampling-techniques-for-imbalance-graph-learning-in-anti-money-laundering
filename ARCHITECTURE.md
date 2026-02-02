@@ -1,53 +1,63 @@
-# Architecture: Three-Layer Loop Structure for Class Imbalance Evaluation
+# Architecture: Multi-Dataset Three-Layer Loop Structure for Class Imbalance Evaluation
 
 ## Overview
-The training pipeline implements a systematic approach to evaluate the impact of class imbalance ratios and sampling techniques on various graph-based methods for AML (Anti-Money Laundering) detection.
+The training pipeline implements a systematic approach to evaluate the impact of class imbalance ratios and sampling techniques on various graph-based methods for AML (Anti-Money Laundering) detection **across two diverse datasets**: Elliptic Bitcoin and IBM Transaction Network.
 
-## Three-Layer Loop Structure
+## Four-Layer Loop Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│ Layer 1: RATIO LOOP (Outer Layer)                                   │
-│ Purpose: Test different class imbalance ratios                       │
-├─────────────────────────────────────────────────────────────────────┤
-│ ├─ ratio = None    → Original dataset imbalance (baseline)           │
-│ ├─ ratio = 2     → 2:1 minority: majority (APATE recommendation)   │
-│ └─ ratio = 1.0     → 1:1 fully balanced                              │
-│                                                                       │
-│ ┌───────────────────────────────────────────────────────────────┐  │
-│ │ Layer 2: METHOD LOOP (Middle Layer)                           │  │
-│ │ Purpose: Train all 8 supervised methods                       │  │
-│ ├───────────────────────────────────────────────────────────────┤  │
-│ │ ├─ intrinsic    (feature-based)                              │  │
-│ │ ├─ positional   (feature-based)                              │  │
-│ │ ├─ deepwalk     (random walk-based)                          │  │
-│ │ ├─ node2vec     (random walk-based)                          │  │
-│ │ ├─ gcn          (graph neural network)                       │  │
-│ │ ├─ sage         (graph neural network)                       │  │
-│ │ ├─ gat          (graph neural network)                       │  │
-│ │ └─ gin          (graph neural network)                       │  │
-│ │                                                               │  │
-│ │ ┌─────────────────────────────────────────────────────────┐ │  │
-│ │ │ Layer 3: SAMPLING LOOP (Inner Layer)                   │ │  │
-│ │ │ Purpose: Apply appropriate sampling technique           │ │  │
-│ │ ├─────────────────────────────────────────────────────────┤ │  │
-│ │ │                                                         │ │  │
-│ │ │ For Feature-based Methods:                             │ │  │
-│ │ │   ├─ intrinsic   → ["none", "Random Undersampling", "smote"]                  │ │  │
-│ │ │   └─ positional  → ["none", "Random Undersampling","smote"]                  │ │  │
-│ │ │                                                         │ │  │
-│ │ │ For GNN Methods:                                        │ │  │
-│ │ │   ├─ deepwalk    → ["none", "Random Undersampling","graph_smote"]            │ │  │
-│ │ │   ├─ node2vec    → ["none", "Random Undersampling","graph_smote"]            │ │  │
-│ │ │   ├─ gcn         → ["none", "Random Undersampling","graph_smote"]            │ │  │
-│ │ │   ├─ sage        → ["none", "Random Undersampling","graph_smote"]            │ │  │
-│ │ │   ├─ gat         → ["none", "Random Undersampling","graph_smote"]            │ │  │
-│ │ │   └─ gin         → ["none", "Random Undersampling","graph_smote"]            │ │  │
-│ │ │                                                         │ │  │
-│ │ └─────────────────────────────────────────────────────────┘ │  │
-│ └───────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Layer 0: DATASET LOOP (Outermost Layer)                                      │
+│ Purpose: Evaluate on multiple network types                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ├─ elliptic  → Cryptocurrency transaction network (203K nodes)              │
+│ └─ ibm       → Banking transaction network (500K nodes)                     │
+│                                                                              │
+│ ┌──────────────────────────────────────────────────────────────────────────┐ │
+│ │ Layer 1: RATIO LOOP (Outer Layer)                                        │ │
+│ │ Purpose: Test different class imbalance ratios                           │ │
+│ ├──────────────────────────────────────────────────────────────────────────┤ │
+│ │ ├─ ratio = None    → Original dataset imbalance (baseline)              │ │
+│ │ ├─ ratio = 2.0     → 2:1 majority:minority (APATE recommendation)      │ │
+│ │ └─ ratio = 1.0     → 1:1 fully balanced                                 │ │
+│ │                                                                          │ │
+│ │ ┌────────────────────────────────────────────────────────────────────┐ │ │
+│ │ │ Layer 2: METHOD LOOP (Middle Layer)                               │ │ │
+│ │ │ Purpose: Train all 8 supervised methods                           │ │ │
+│ │ ├────────────────────────────────────────────────────────────────────┤ │ │
+│ │ │ ├─ intrinsic    (feature-based)                                  │ │ │
+│ │ │ ├─ positional   (feature-based)                                  │ │ │
+│ │ │ ├─ deepwalk     (random walk-based)                              │ │ │
+│ │ │ ├─ node2vec     (random walk-based)                              │ │ │
+│ │ │ ├─ gcn          (graph neural network)                           │ │ │
+│ │ │ ├─ sage         (graph neural network)                           │ │ │
+│ │ │ ├─ gat          (graph neural network)                           │ │ │
+│ │ │ └─ gin          (graph neural network)                           │ │ │
+│ │ │                                                                  │ │ │
+│ │ │ ┌──────────────────────────────────────────────────────────────┐ │ │ │
+│ │ │ │ Layer 3: SAMPLING LOOP (Inner Layer)                        │ │ │ │
+│ │ │ │ Purpose: Apply appropriate sampling technique               │ │ │ │
+│ │ │ ├──────────────────────────────────────────────────────────────┤ │ │ │
+│ │ │ │                                                              │ │ │ │
+│ │ │ │ For Feature-based Methods:                                  │ │ │ │
+│ │ │ │   ├─ intrinsic   → ["none", "RUS", "SMOTE"]                 │ │ │ │
+│ │ │ │   └─ positional  → ["none", "RUS", "SMOTE"]                 │ │ │ │
+│ │ │ │                                                              │ │ │ │
+│ │ │ │ For Embedding & GNN Methods:                                │ │ │ │
+│ │ │ │   ├─ deepwalk    → ["none", "RUS", "GraphSMOTE"]            │ │ │ │
+│ │ │ │   ├─ node2vec    → ["none", "RUS", "GraphSMOTE"]            │ │ │ │
+│ │ │ │   ├─ gcn         → ["none", "RUS", "GraphSMOTE"]            │ │ │ │
+│ │ │ │   ├─ sage        → ["none", "RUS", "GraphSMOTE"]            │ │ │ │
+│ │ │ │   ├─ gat         → ["none", "RUS", "GraphSMOTE"]            │ │ │ │
+│ │ │ │   └─ gin         → ["none", "RUS", "GraphSMOTE"]            │ │ │ │
+│ │ │ │                                                              │ │ │ │
+│ │ │ └──────────────────────────────────────────────────────────────┘ │ │ │
+│ │ └────────────────────────────────────────────────────────────────────┘ │ │
+│ └──────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Total Experiments**: 2 datasets × 3 ratios × 8 methods × 3 samplings = **144 combinations**
 
 ## Component Responsibilities
 

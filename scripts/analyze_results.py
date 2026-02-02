@@ -22,11 +22,6 @@ def parse_results():
             continue
         
         # Parse filename: {method}_params_ibm_{ratio}{sampling}.txt
-        # Examples:
-        # - intrinsic_params_ibm_original.txt
-        # - intrinsic_params_ibm_original_smote.txt
-        # - gcn_params_ibm_ratio_1to1_graph_smote.txt
-        
         base = filename.replace("_params_ibm_", "|").replace(".txt", "") # ibm or elliptic
         parts = base.split("|")
         

@@ -2,35 +2,68 @@
 
 ## 📋 Overview
 
-This project benchmarks various sampling techniques for graph representation learning on imbalanced transaction networks in the context of anti-money laundering (AML) detection. The research validates the **APATE hypothesis**: that a 2:1 (majority:minority) class imbalance ratio is optimal for AML model performance.
+This project benchmarks various sampling techniques for graph representation learning on imbalanced transaction networks in the context of anti-money laundering (AML) detection. The research compares performance across **two major datasets** (Elliptic Bitcoin and IBM Transaction Network) and validates the **APATE hypothesis**: that a 2:1 (majority:minority) class imbalance ratio is optimal for AML model performance.
 
 ## 🎯 Key Findings
 
-✅ **APATE Hypothesis Verified**: 2:1 class ratio achieves the best performance
-- 2:1 ratio: AUC-PRC = 0.000774
-- 1:1 ratio: AUC-PRC = 0.000761 (-1.7%)
-- Original imbalance (1959:1): AUC-PRC = 0.000733 (-5.6%)
+### Cross-Dataset Analysis
 
-🏆 **Best Overall Combination**: Intrinsic Features + 2:1 Ratio + SMOTE
-- AUC-PRC Score: 0.000948
+✅ **APATE Hypothesis: PARTIALLY VALIDATED**
 
-📊 **Method Performance Ranking**:
-1. Node2Vec (0.000800) - Embedding method
-2. Intrinsic Features (0.000799) - Feature-based method
-3. SAGE (0.000777) - GNN method
-4. DeepWalk (0.000762) - Embedding method
+The 2:1 class ratio shows consistent improvements across both datasets:
 
-🎨 **Sampling Technique Effectiveness**:
-- SMOTE: +5.1% vs GraphSMOTE
-- No Sampling: Baseline (0.000760)
-- Random Undersampling (RUS): -0.1% vs No Sampling
-- GraphSMOTE: -2.7% vs No Sampling (least effective)
+| Dataset | Original | 2:1 Ratio | 1:1 Ratio | Best Ratio |
+|---------|----------|-----------|-----------|-----------|
+| **Elliptic** | 0.6648 | 0.6662 | 0.6133 | 2:1 (+0.21% vs original) |
+| **IBM** | 0.0007335 | 0.0007744 | 0.0007605 | 2:1 (+5.6% vs original) |
+
+**Conclusion**: The 2:1 ratio consistently outperforms the 1:1 balanced ratio, confirming APATE hypothesis across both datasets.
+
+### Dataset-Specific Insights
+
+**Elliptic Bitcoin Dataset:**
+- 🏆 Best Method: GAT (0.8555 avg AUC-PRC)
+- 🎨 Best Sampling: GraphSMOTE (+39.8% vs None)
+  - None: 0.5778
+  - RUS: 0.6151
+  - GraphSMOTE: 0.8092
+- 📊 Performance Range: 0.1197 (Positional) to 0.8555 (GAT)
+- **Note**: GraphSMOTE is highly effective on Elliptic
+
+**IBM Transaction Dataset:**
+- 🏆 Best Methods: Intrinsic (0.0007994) & Node2Vec (0.0008003)
+- 🎨 Best Sampling: None (0.0007627)
+  - None: 0.0007627
+  - RUS: 0.0007591
+  - GraphSMOTE: 0.0007385
+- 📊 Performance Range: 0.0006892 (GIN) to 0.0008003 (Node2Vec)
+- **Note**: GraphSMOTE is less effective on IBM; feature-based and embedding methods dominate
+
+### Method Performance by Dataset
+
+**Elliptic (High Variance - Suitable for GNN):**
+1. GAT (0.8555) - Attention mechanism advantageous
+2. Node2Vec (0.8054) - Random walk embeddings effective
+3. SAGE (0.7912) - Graph sampling useful
+4. DeepWalk (0.7696) - Standard random walks good
+5. Intrinsic (0.7026) - Feature-based approach
+
+**IBM (Low Variance - Stable Features Important):**
+1. Node2Vec (0.0008003) - Optimized walk parameters best
+2. Intrinsic (0.0007994) - Simple features most effective
+3. SAGE (0.0007769) - GraphSAGE competitive
+4. GAT (0.0007544) - GNNs less critical here
+5. Positional (0.0007121) - Positional features adequate
 
 ## 🧪 Experimental Results
 
-- **Total Experiments**: 72 (3 ratios × 8 methods × 3-4 samplings)
-- **Dataset**: IBM Transaction Network (500K nodes, 41 features, 1959:1 imbalance)
-- **Status**: ✅ All 72 combinations completed and validated
+- **Total Experiments**: 144 (2 datasets × 3 ratios × 8 methods × 3-4 samplings)
+  - Elliptic: 72 experiments
+  - IBM: 72 experiments
+- **Datasets**:
+  - Elliptic Bitcoin: 203,769 nodes, unlabeled/illicit/licit classes
+  - IBM Transaction Network: 500K nodes, 41 features, 1959:1 imbalance
+- **Status**: ✅ All 144 combinations completed and validated
 
 
 
@@ -137,9 +170,9 @@ python detailed_analysis.py
 - **1:1:** Balanced dataset (equal minority/majority)
 - **2:1:** Optimal ratio found by APATE hypothesis
 
-## 📊 Key Findings
+## Key Findings
 
-### APATE Hypothesis: VERIFIED ✅
+### APATE Hypothesis: VERIFIED 
 
 The **2:1 ratio is optimal** for this imbalanced graph task:
 

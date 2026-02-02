@@ -27,7 +27,7 @@ def load_elliptic():
     columns = {0: 'txId', 1: 'time_step'}
     feat_df = feat_df.rename(columns=columns)
 
-    # 特徵矩陣 x 由 time_step 欄位開始的所有欄位構成，並轉換為 PyTorch 浮點 Tensor
+    # Feature matrix x is composed of all columns starting from the time_step column, converted to PyTorch float Tensor
     x = torch.from_numpy(feat_df.loc[:, 'time_step':].values).to(torch.float)
 
     # There exists 3 different classes in the dataset:
@@ -37,11 +37,10 @@ def load_elliptic():
     y = torch.from_numpy(class_df['class'].values)
     feat_df["class"] = y
 
-    # Timestamp based split:
-    """使用 time_step 欄位進行時間序列分割，並排除未標記 (class=2) 的交易    
-    Train Mask: time_step < 30 且已標記。
-    - Val Mask: 30 <= time_step < 40 且已標記。
-    - Test Mask: time_step >= 40 且已標記。"""
+    # Timestamp based split: Use time_step column for time-series split, exclude unlabeled transactions (class=2)
+    # Train Mask: time_step < 30 and labeled
+    # Val Mask: 30 <= time_step < 40 and labeled
+    # Test Mask: time_step >= 40 and labeled
 
     time_step = torch.from_numpy(feat_df['time_step'].values)
     train_mask = (time_step < 30) & (y != 2)
@@ -63,41 +62,43 @@ def preprocess_ibm(num_obs):
     data_df = pd.read_csv(data_path)
     data_df['Timestamp'] = pd.to_datetime(data_df['Timestamp'], format=date_format)
     data_df.sort_values('Timestamp', inplace=True)
-    data_df = data_df[data_df['Account']!= data_df['Account.1']] #載入原始交易數據，按時間排序，並移除自我交易 (Account != Account.1)
+    data_df = data_df[data_df['Account']!= data_df['Account.1']]  # Load raw transaction data, sort by time, and remove self-transactions (Account != Account.1)
     start_index = int(len(data_df)-num_obs)
     data_df = data_df.iloc[start_index:]
     data_df.reset_index(drop=True, inplace=True)
     data_df.reset_index(inplace=True)
 
-    """採用時間窗口方法構建圖：構建一個有向圖 (Directed Graph)，其中節點是交易 (txId)，邊是時間上連續且資金流向正確的交易鏈"""
+    # Build graph using sliding window method: construct a directed graph where nodes are transactions (txId)
+    # and edges are consecutive transactions with correct money flow
 
-    #如果交易 A (Account.1) 和交易 B (Account) 之間的時間差小於或等於 delta（預設 4 小時），則從交易 A 到交易 B 建立一條邊
+    # If the time difference between transaction A (Account.1) and transaction B (Account) is <= delta (default 4 hours),
+    # create an edge from A to B
     data_df_accounts = data_df[['index', 'Account', 'Account.1', 'Timestamp']]
-    delta = 4*60 # 4 hours
+    delta = 4*60  # 4 hours
 
     print('Number of observations: ', len(data_df_accounts))
-    pieces = 100 #分塊處理數量。 由於數據量大（50萬筆），為了效率和記憶體管理，程式碼將數據分成 100 個區塊 (chunks) 進行處理
+    pieces = 100  # Number of chunks. Since data volume is large (500K transactions), divide into 100 chunks for efficiency
 
     source = []
     target = []
     
-    #tqdm 目的是為 IBM 交易數據集構建圖的邊緣列表（即定義交易之間的關係）。
-    #採用了時間窗口連接 (Sliding Window Join)來識別具有先後繼承關係的交易，從而將原本獨立的交易記錄轉化為Directed Graph: 將連續發生、且資金從一個帳戶流向另一個帳戶的交易識別出來，形成圖中的一條邊
+    # Build edge list for IBM transaction graph (define relationships between transactions).
+    # Use sliding window join to identify transactions with successor relationships,
+    # converting independent transaction records into a directed graph
     for i in tqdm(range(pieces)):
         start = i*num_obs//pieces
         end = (i+1)*num_obs//pieces
-        data_df_right = data_df_accounts[start:end] #定義右側窗口 (Current Transactions)。 這是當前主要需要尋找前驅交易的交易數據子集
+        data_df_right = data_df_accounts[start:end]  # Define right window (current transactions to find predecessors for)
         min_timestamp = data_df_right['Timestamp'].iloc[0]
         max_timestamp = data_df_right['Timestamp'].iloc[-1]
 
-        """定義左側窗口 (Candidate Predecessor Transactions)。 這是潛在的前驅交易區塊
-        它包含：
-        1. 時間上稍早於 min_timestamp（最多早 delta 時間，即 4 小時）的交易。
-        2. 時間上最晚到 max_timestamp 的所有交易。"""
+        # Define left window (candidate predecessor transactions)
+        # Contains: 1) transactions slightly before min_timestamp (at most delta time earlier, i.e., 4 hours)
+        #           2) all transactions up to max_timestamp
         data_df_left = data_df_accounts[(data_df_accounts['Timestamp']>=min_timestamp-timedelta(minutes=delta)) & (data_df_accounts['Timestamp']<=max_timestamp)]
         
-        #識別了資金從交易 1 流向交易 2 的潛在路徑
-        #尋找：左側交易的收款帳戶 (Account.1 of _1) == 右側交易的付款帳戶 (Account of _2)
+        # Identify potential money flow paths from transaction 1 to transaction 2
+        # Find: receiving account of transaction 1 (Account.1_1) == sending account of transaction 2 (Account_2)
         data_df_join = data_df_left.merge(data_df_right, left_on='Account.1', right_on='Account', suffixes=('_1', '_2'))
 
         for j in range(len(data_df_join)):

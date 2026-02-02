@@ -474,8 +474,8 @@ def evaluate_if(model, x_test, y_test, percentile_q_list = [99], n_samples=100):
             AUC = 0.5 
             AP = 0.0
         else:
-            # 🎯 最終修正：確保 roc_auc_score 知道這是二元問題，並使用分數
-            # 這裡我們只傳遞二元分數，並確保標籤是二元的。
+            # Final fix: Ensure roc_auc_score knows this is a binary problem and uses scores
+            # Here we only pass binary scores and ensure labels are binary.
             try:
                 AUC = roc_auc_score(y_new, y_pred)
                 AP = average_precision_score(y_new, y_pred)
@@ -669,20 +669,20 @@ def graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5,
 
 def adjust_mask_to_ratio(mask, labels, target_ratio, random_state=None):
     """
-    調整mask中的class比例到指定的target_ratio。
+    Adjust the class ratio in the mask to the specified target_ratio.
     
     Parameters:
     - mask: boolean mask (1D tensor or array)
     - labels: label vector (n_samples,)
-    - target_ratio: 目標比例 (majority_count / minority_count)
+    - target_ratio: target ratio (majority_count / minority_count)
                    e.g., 1.0 for 1:1, 2.0 for 2:1 (majority:minority)
     - random_state: seed for reproducibility
     
     Returns:
     - new_mask: adjusted boolean mask
-    - original_majority_count: 原始多數類數量
-    - original_minority_count: 原始少數類數量
-    - new_majority_count: 調整後多數類數量
+    - original_majority_count: original majority class count
+    - original_minority_count: original minority class count
+    - new_majority_count: adjusted majority class count
     """
     is_torch = isinstance(mask, torch.Tensor)
     

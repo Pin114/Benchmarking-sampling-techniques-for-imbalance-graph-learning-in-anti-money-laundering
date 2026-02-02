@@ -1,6 +1,6 @@
 """
-特徵空間 SMOTE + 啟發式連邊 for GNN
-這是 GraphSMOTE 的實用替代方案，避免複雜的邊生成模組
+Feature-Space SMOTE + Heuristic Edge Connection for GNN
+This is a practical alternative to GraphSMOTE, avoiding complex edge generation modules
 """
 import numpy as np
 import torch
@@ -18,7 +18,7 @@ def feature_smote_with_heuristic_edges(
     random_state=None
 ):
     """
-    在特徵空間進行 SMOTE，然後用啟發式方法連邊。
+    Apply SMOTE in feature space, then use heuristic edge connection.
     
     Parameters:
     - mask: boolean mask indicating training samples
@@ -26,7 +26,7 @@ def feature_smote_with_heuristic_edges(
     - labels: label vector (n_samples,)
     - edge_index: original edge list (2, n_edges)
     - k_neighbors: k for k-NN graph in heuristic edge generation
-    - heuristic: 'knn' (連接到 k 個最相似的節點) or 'parent' (連接到父節點)
+    - heuristic: 'knn' (connect to k most similar nodes) or 'parent' (connect to parent node)
     - random_state: seed for reproducibility
     
     Returns:
@@ -36,7 +36,7 @@ def feature_smote_with_heuristic_edges(
     - expanded_edge_index: augmented edge list with heuristic connections
     """
     
-    # 轉換為 numpy
+    # Convert to numpy
     is_torch = isinstance(features, torch.Tensor)
     if is_torch:
         features_np = features.cpu().numpy()
@@ -51,7 +51,7 @@ def feature_smote_with_heuristic_edges(
     
     mask_np = np.atleast_1d(mask_np.astype(bool))
     
-    # Step 1: 提取訓練集的特徵和標籤
+    # Step 1: Extract training features and labels
     idx_train = np.where(mask_np)[0]
     X_train = features_np[idx_train]
     y_train = labels_np[idx_train]
@@ -64,43 +64,43 @@ def feature_smote_with_heuristic_edges(
         y_train = y_train[valid_idx]
         idx_train = idx_train[valid_idx]
     
-    # Step 2: 應用 SMOTE
+    # Step 2: Apply SMOTE
     smote = SMOTE(k_neighbors=k_neighbors, random_state=random_state)
     X_smote, y_smote = smote.fit_resample(X_train, y_train)
     
-    # 找出新生成的虛擬節點
+    # Identify newly generated synthetic nodes
     n_original = X_train.shape[0]
     n_synthetic = X_smote.shape[0] - n_original
     
-    # Step 3: 建立擴展的特徵矩陣和標籤
-    # 全部特徵 = 原始特徵 + 虛擬特徵
+    # Step 3: Build expanded feature matrix and labels
+    # All features = original features + synthetic features
     expanded_features = np.vstack([features_np, X_smote[n_original:]])
     expanded_labels = np.concatenate([labels_np, y_smote[n_original:]])
     
-    # Step 4: 建立擴展的 mask（只標記訓練集和虛擬節點）
+    # Step 4: Build expanded mask (mark only training set and synthetic nodes)
     expanded_mask = np.zeros(expanded_features.shape[0], dtype=bool)
-    expanded_mask[idx_train] = True  # 原始訓練集
-    expanded_mask[-n_synthetic:] = True  # 虛擬節點
+    expanded_mask[idx_train] = True  # Original training set
+    expanded_mask[-n_synthetic:] = True  # Synthetic nodes
     
-    # Step 5: 啟發式連邊
+    # Step 5: Heuristic edge connection
     if heuristic == 'knn':
-        # 使用 k-NN 圖連接虛擬節點到特徵最相似的 k 個節點
+        # Use k-NN graph to connect synthetic nodes to k most similar features
         nbrs = NearestNeighbors(n_neighbors=k_neighbors+1, algorithm='ball_tree').fit(features_np)
         
         new_edges = []
         for i in range(n_synthetic):
-            synthetic_idx = features_np.shape[0] + i  # 虛擬節點在擴展矩陣中的索引
+            synthetic_idx = features_np.shape[0] + i  # Index of synthetic node in expanded matrix
             synthetic_feature = X_smote[n_original + i].reshape(1, -1)
             
-            # 找 k 個最相似的原始節點
+            # Find k most similar original nodes
             distances, indices = nbrs.kneighbors(synthetic_feature)
             
-            for neighbor_idx in indices[0][1:]:  # 跳過自己
-                # 雙向邊
+            for neighbor_idx in indices[0][1:]:  # Skip self
+                # Bidirectional edges
                 new_edges.append([neighbor_idx, synthetic_idx])
                 new_edges.append([synthetic_idx, neighbor_idx])
         
-        # 合併原始邊和新邊
+        # Merge original edges and new edges
         if new_edges:
             new_edges_array = np.array(new_edges).T
             expanded_edge_index = np.hstack([edge_index_np, new_edges_array])
@@ -108,9 +108,9 @@ def feature_smote_with_heuristic_edges(
             expanded_edge_index = edge_index_np
     
     elif heuristic == 'parent':
-        # 連接虛擬節點到它的「父節點」（通過 SMOTE 的 minority index）
-        # 注：SMOTE 中的 synthetic_inds 屬性記錄了每個虛擬節點的父節點
-        # 但這需要訪問 SMOTE 內部，暫用 knn 作為備選
+        # Connect synthetic nodes to their "parent nodes" (via SMOTE minority index)
+        # Note: SMOTE synthetic_inds attribute records parent node for each synthetic node
+        # But this requires internal SMOTE access, falling back to knn as alternative
         print("Warning: 'parent' heuristic requires SMOTE internal access. Falling back to 'knn'")
         return feature_smote_with_heuristic_edges(
             mask, features, labels, edge_index,
@@ -120,7 +120,7 @@ def feature_smote_with_heuristic_edges(
     else:
         raise ValueError(f"Unknown heuristic: {heuristic}")
     
-    # 轉換回 torch 如果需要
+    # Convert back to torch if needed
     if is_torch:
         expanded_features = torch.from_numpy(expanded_features).float()
         expanded_labels = torch.from_numpy(expanded_labels).long()
