@@ -179,8 +179,8 @@ def positional_features(
     features_df_train = features_df[train_mask.numpy()]
 
 
-    # 🎯 修正點 1: 在 drop 函數中加入 errors='ignore'
-    # 這樣如果 PSP 或 fraud 欄位不存在，Pandas 會忽略錯誤並繼續執行。
+    # FIX 1: Add errors='ignore' in drop function
+    # This allows Pandas to ignore errors if PSP or fraud columns don't exist and continue execution
     x_train_features = features_df_train.drop(["PSP", "fraud"], axis=1, errors='ignore').values
     x_train = torch.tensor(x_train_features, dtype=torch.float32).to(device_decoder)
     y_train = torch.tensor(features_df_train["fraud"].values, dtype=torch.long).to(device_decoder)
@@ -190,7 +190,7 @@ def positional_features(
     features_df_test = features_df[test_mask.numpy()]
 
 
-    # 🎯 修正點 2: 在 drop 函數中加入 errors='ignore'
+    # FIX 2: Add errors='ignore' in drop function for test set
     x_test_features = features_df_test.drop(["PSP", "fraud"], axis=1, errors='ignore').values
     x_test = torch.tensor(x_test_features, dtype=torch.float32).to(device_decoder)
     y_test = torch.tensor(features_df_test["fraud"].values, dtype=torch.long).to(device_decoder)
