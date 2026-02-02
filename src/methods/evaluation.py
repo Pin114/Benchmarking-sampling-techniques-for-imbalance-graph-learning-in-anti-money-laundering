@@ -210,7 +210,7 @@ def random_undersample_mask(mask, labels, target_ratio=1.0, random_state=None):
     is_torch = _torch is not None and isinstance(mask, _torch.Tensor)
 
     if is_torch:
-        # 轉換為 NumPy 陣列時，強制轉換為 bool 以避免 object_ 類型
+        # Convert to NumPy array and force bool dtype to avoid object_ type
         mask_np = mask.cpu().numpy().astype(_np.bool_)
         labels_np = labels.cpu().numpy() if isinstance(labels, _torch.Tensor) else _np.array(labels)
     else:
@@ -221,26 +221,26 @@ def random_undersample_mask(mask, labels, target_ratio=1.0, random_state=None):
     # make sure mask_np is 1D
     mask_np = _np.atleast_1d(mask_np) 
 
-    # 獲取原始訓練遮罩 (mask) 中所有為 True 的樣本索引
+    # Get indices of all True samples in the original training mask
     idx = _np.where(mask_np)[0]
     if idx.size == 0:
         # nothing to do
         return mask.clone() if is_torch and _torch is not None else mask_np
 
     lbls_in_mask = labels_np[idx]
-    classes, counts = _np.unique(lbls_in_mask, return_counts=True) #計算在 mask 內部，各類別的樣本數量
+    classes, counts = _np.unique(lbls_in_mask, return_counts=True)  # Count sample count for each class within mask
     if classes.size <= 1:
         # single class inside mask
         return mask.clone() if is_torch and _torch is not None else mask_np
 
-    minority_count = int(_np.min(counts)) #找出在 mask 內，少數類的數量
+    minority_count = int(_np.min(counts))  # Find minority class count within mask
     desired_majority = int(_np.floor(minority_count * target_ratio))
 
     rnd = _np.random.RandomState(random_state)
 
-    """遍歷 mask 內的類別：
-    1. 如果是多數類（cnt > minority_count），則使用 rnd.choice 隨機抽樣出 desired_majority 個索引。
-    2. 如果是少數類，則保留所有索引。"""
+    """Iterate through classes in mask:
+    1. If majority class (cnt > minority_count), use rnd.choice to randomly sample desired_majority indices.
+    2. If minority class, keep all indices."""
 
     # build new selected indices
     selected = []
@@ -254,11 +254,11 @@ def random_undersample_mask(mask, labels, target_ratio=1.0, random_state=None):
 
     selected = _np.concatenate(selected)
     
-    # 獲取原始 mask 的尺寸，以確保返回的 mask 尺寸一致
+    # Get original mask shape to ensure returned mask shape is consistent
     original_shape = mask.shape if is_torch else _np.array(mask).shape
-    new_mask = _np.zeros(original_shape, dtype=_np.bool_) #創建一個與原始數據集大小相同的全新遮罩，所有值初始化為 False
+    new_mask = _np.zeros(original_shape, dtype=_np.bool_)  # Create a new mask with same size as original dataset, all values initialized to False
          
-    new_mask[selected] = True #在 new_mask 中，只將通過採樣被選中的索引位置設為 True
+    new_mask[selected] = True  # In new_mask, set only the indices selected through sampling to True
 
     if is_torch and _torch is not None:
         return _torch.from_numpy(new_mask)

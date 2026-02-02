@@ -105,8 +105,8 @@ def preprocess_ibm(num_obs):
             row = data_df_join.iloc[j]
             delta_trans = row['Timestamp_2']-row['Timestamp_1']
             if (delta_trans.days*24*60+delta_trans.seconds/60 <= delta) & (delta_trans.days*24*60+delta_trans.seconds/60 >= 0):
-                source.append(row['index_1']) #將符合時間和帳戶流動條件的交易索引（即 txId）分別存入 source 和 target 列表，構成了圖的邊緣列表
-                target.append(row['index_2']) #將所有找到的邊緣關係寫入 edges.csv 檔案
+                source.append(row['index_1'])  # Store transaction indices (txIds) meeting time and account flow conditions into source and target lists to form graph edges
+                target.append(row['index_2'])  # Add all discovered edge relationships to edges.csv file
 
     edges_out = os.path.join(ROOT, 'data', 'data', 'IBM', 'edges.csv')
     pd.DataFrame({'txId1': source, 'txId2': target}).to_csv(edges_out, index=False)
@@ -115,8 +115,8 @@ def load_ibm():
     path = os.path.join(ROOT, 'data', 'data', 'IBM')
 
     df_features = pd.read_csv(os.path.join(path, 'HI-Small_Trans.csv')) 
-    df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], dayfirst=True, errors='coerce') #IBM 時間格式
-#     df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], format='%Y/%m/%d %H:%M') #Elliptic 時間格式
+    df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], dayfirst=True, errors='coerce')  # IBM timestamp format
+#     df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], format='%Y/%m/%d %H:%M')  # Elliptic timestamp format
     df_features.sort_values('Timestamp', inplace=True)
     df_features = df_features[df_features['Account']!= df_features['Account.1']]
 
