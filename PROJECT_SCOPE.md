@@ -1,7 +1,7 @@
 # Project Scope: Supervised Graph Learning with Class Imbalance & Sampling Techniques
 
 ## Overview
-This project systematically evaluates the impact of **class imbalance ratios** and **sampling techniques** on supervised graph-based methods for anti-money laundering (AML) detection. The research validates the APATE hypothesis that a 2:1 (majority:minority) ratio is optimal for AML fraud detection.
+This project systematically evaluates the impact of **class imbalance ratios** and **sampling techniques** on supervised graph-based methods for anti-money laundering (AML) detection. 
 
 ## Research Hypothesis
 
@@ -97,7 +97,7 @@ res/{method}_params_{dataset}_{ratio_tag}_{sampling_tag}.txt
 ## Key Implementation Details
 
 ### Environment Setup
-- Python 3.10 (conda environment: `aml`)
+- Python 3.10 
 - PyTorch 2.x with PyTorch Geometric
 - macOS-specific: OMP_NUM_THREADS=1 to avoid OpenMP conflicts
 

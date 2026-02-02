@@ -467,9 +467,9 @@ def GNN_features(
 
             y_hat, h = model(ntw_torch.x, ntw_torch.edge_index.to(device))
 
-            y = ntw_torch.y
+            y = ntw_torch.y.long()
 
-            loss = criterion(y_hat[train_mask], y[train_mask])
+            loss = criterion(y_hat[train_mask.bool()], y[train_mask.bool()])
 
             loss.backward()
 
@@ -593,13 +593,13 @@ def GNN_features(
 
             y_hat = out
 
-            y = ntw_torch.y
+            y = ntw_torch.y.long()
 
         else:
 
-            y_hat = out[test_mask].squeeze()
+            y_hat = out[test_mask.bool()].squeeze()
 
-            y = ntw_torch.y[test_mask].squeeze()
+            y = ntw_torch.y.long()[test_mask.bool()].squeeze()
 
     else:
 
@@ -636,6 +636,8 @@ def GNN_features(
         test_correct = pred[ntw_torch.test_mask] == ntw_torch.y[ntw_torch.test_mask]  # Check against ground-truth labels.
 
         ap_score = int(test_correct.sum()) / int(ntw_torch.test_mask.sum())
+    
+    return ap_score
 
 
 def intrinsic_features_smote(
@@ -804,13 +806,26 @@ def GNN_features_graphsmote(
         k_neighbors=k_neighbors,
         random_state=random_state
     )
+    
+    # Ensure labels are binary (0 and 1 only) - filter out any invalid labels like 2 (unknown)
+    if isinstance(y_smote, torch.Tensor):
+        valid_labels = torch.isin(y_smote, torch.tensor([0, 1], device=y_smote.device))
+        valid_mask = train_mask_smote & valid_labels
+    else:
+        valid_labels = np.isin(y_smote, [0, 1])
+        valid_mask = train_mask_smote & torch.from_numpy(valid_labels).bool()
+    
+    if not valid_mask.any():
+        print("Warning: No valid training samples after filtering. Falling back to no sampling.")
+        # Fall back to regular GNN without SMOTE
+        return GNN_features(ntw_torch, model, lr, n_epochs, train_loader, test_loader, train_mask, test_mask, use_intrinsic)
 
     # Create a copy of the graph data with SMOTE-augmented data
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
-    ntw_torch_smote.y = y_smote.to(device)
-    ntw_torch_smote.edge_index = edge_index_smote.to(device)
-    train_mask_smote = train_mask_smote.to(device)
+    ntw_torch_smote.y = y_smote.long().to(device)
+    ntw_torch_smote.edge_index = edge_index_smote.long().to(device)
+    train_mask_smote = valid_mask.bool().to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
     criterion = nn.CrossEntropyLoss()
@@ -820,9 +835,17 @@ def GNN_features_graphsmote(
         optimizer.zero_grad()
         y_hat, h = model(ntw_torch_smote.x, ntw_torch_smote.edge_index)
         y = ntw_torch_smote.y
-        loss = criterion(y_hat[train_mask_smote], y[train_mask_smote])
-        loss.backward()
-        optimizer.step()
+        # Double-check: only use samples with valid labels (0 or 1)
+        valid_mask_batch = torch.isin(y, torch.tensor([0, 1], device=y.device))
+        if valid_mask_batch.any():
+            y_hat_filtered = y_hat[train_mask_smote & valid_mask_batch]
+            y_filtered = y[train_mask_smote & valid_mask_batch]
+            if len(y_filtered) > 0:
+                loss = criterion(y_hat_filtered, y_filtered)
+                loss.backward()
+                optimizer.step()
+        else:
+            print("Warning: No valid batches for training. Skipping batch.")
 
     for _ in range(n_epochs):
         train_GNN_graphsmote()

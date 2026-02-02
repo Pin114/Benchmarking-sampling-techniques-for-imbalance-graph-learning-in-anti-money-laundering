@@ -28,6 +28,7 @@ from utils.Network import *
 from data.DatasetConstruction import *
 
 from src.methods.utils.decoder import *
+from src.methods.feature_smote_heuristic import feature_smote_with_heuristic_edges
 
 from tqdm import tqdm
 
@@ -582,29 +583,35 @@ def smote_mask(mask, features, labels, k_neighbors=5, random_state=None):
     synthetic_features = []
     synthetic_labels = []
 
-    for i in range(n_synthetic):
-        # Randomly pick a minority sample
-        minority_idx = rnd.choice(len(idx_minority))
-        # Randomly pick one of its k nearest neighbors (from majority class)
-        neighbor_idx = rnd.choice(k_neighbors)
-        
-        x_minority = features_masked[idx_minority[minority_idx]]
-        # Map back to original indices
-        neighbor_original_idx = idx_majority[indices[minority_idx, neighbor_idx]]
-        x_neighbor = features_masked[neighbor_original_idx]
-        
-        # Generate synthetic sample
-        alpha = rnd.uniform(0, 1)
-        synthetic_sample = x_minority + alpha * (x_neighbor - x_minority)
-        synthetic_features.append(synthetic_sample)
-        synthetic_labels.append(minority_class)
+    # Only generate synthetic samples if needed (n_synthetic > 0)
+    if n_synthetic > 0:
+        for i in range(n_synthetic):
+            # Randomly pick a minority sample
+            minority_idx = rnd.choice(len(idx_minority))
+            # Randomly pick one of its k nearest neighbors (from majority class)
+            neighbor_idx = rnd.choice(min(k_neighbors, len(idx_majority)))
+            
+            x_minority = features_masked[idx_minority[minority_idx]]
+            # Map back to original indices
+            neighbor_original_idx = idx_majority[indices[minority_idx, neighbor_idx]]
+            x_neighbor = features_masked[neighbor_original_idx]
+            
+            # Generate synthetic sample
+            alpha = rnd.uniform(0, 1)
+            synthetic_sample = x_minority + alpha * (x_neighbor - x_minority)
+            synthetic_features.append(synthetic_sample)
+            synthetic_labels.append(minority_class)
 
-    # Combine original and synthetic samples
-    synthetic_features = np.array(synthetic_features)
-    synthetic_labels = np.array(synthetic_labels)
-
-    expanded_features = np.vstack([features_np, synthetic_features])
-    expanded_labels = np.concatenate([labels_np, synthetic_labels])
+        # Combine original and synthetic samples
+        synthetic_features = np.array(synthetic_features)
+        synthetic_labels = np.array(synthetic_labels)
+        
+        expanded_features = np.vstack([features_np, synthetic_features])
+        expanded_labels = np.concatenate([labels_np, synthetic_labels])
+    else:
+        # If already balanced (n_synthetic == 0), just return original
+        expanded_features = features_np
+        expanded_labels = labels_np
 
     # Create expanded mask
     expanded_mask = np.zeros(len(expanded_labels), dtype=bool)
@@ -626,159 +633,38 @@ def smote_mask(mask, features, labels, k_neighbors=5, random_state=None):
 def graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, 
                      similarity_metric='cosine', random_state=None):
     """
-    GraphSMOTE: Graph-aware over-sampling using edge information.
+    GraphSMOTE: Feature-space SMOTE + Heuristic Edge Connection
     
-    Generates synthetic samples using both feature similarity and graph structure.
-    Synthetic samples are created as interpolations of minority class nodes 
-    and their graph neighbors.
-
+    This is a practical replacement for complex graph-aware SMOTE methods.
+    Strategy:
+    1. Apply standard SMOTE to feature matrix (ignores graph structure)
+    2. Connect synthetic nodes via k-NN heuristic in feature space
+    3. Return expanded features + new adjacency matrix for GNN input
+    
     Parameters:
     - mask: boolean mask (1D tensor or array)
     - features: feature matrix (n_samples, n_features)
     - labels: label vector (n_samples,)
     - edge_index: edge indices (2, n_edges) as torch tensor or numpy array
-    - k_neighbors: number of nearest neighbors in feature space to consider
-    - similarity_metric: 'cosine' or 'euclidean'
+    - k_neighbors: number of nearest neighbors for heuristic edge connection
+    - similarity_metric: 'cosine' or 'euclidean' (used for edge connection)
     - random_state: seed for reproducibility
 
     Returns:
     - expanded_features: feature matrix with synthetic samples
     - expanded_labels: label vector with synthetic labels
     - expanded_mask: boolean mask for training set
-    - expanded_edge_index: edge indices for expanded graph (original edges + synthetic edges)
+    - expanded_edge_index: edge indices (original edges + heuristic synthetic connections)
     """
-    # Convert to numpy/torch as needed
-    is_torch_feat = isinstance(features, torch.Tensor)
-    is_torch_labels = isinstance(labels, torch.Tensor)
-    is_torch_mask = isinstance(mask, torch.Tensor)
-    is_torch_edges = isinstance(edge_index, torch.Tensor)
-
-    if is_torch_feat:
-        features_np = features.cpu().numpy()
-    else:
-        features_np = np.array(features)
-
-    if is_torch_labels:
-        labels_np = labels.cpu().numpy()
-    else:
-        labels_np = np.array(labels)
-
-    if is_torch_mask:
-        mask_np = mask.cpu().numpy().astype(bool)
-    else:
-        mask_np = np.array(mask).astype(bool)
-
-    if is_torch_edges:
-        edge_index_np = edge_index.cpu().numpy()
-    else:
-        edge_index_np = np.array(edge_index)
-
-    # Build adjacency list for graph neighbors
-    n_nodes = features_np.shape[0]
-    adj_list = [[] for _ in range(n_nodes)]
-    for i in range(edge_index_np.shape[1]):
-        src, dst = edge_index_np[0, i], edge_index_np[1, i]
-        adj_list[src].append(dst)
-        adj_list[dst].append(src)
-
-    # Get samples in mask
-    idx_mask = np.where(mask_np)[0]
-    features_masked = features_np[idx_mask]
-    labels_masked = labels_np[idx_mask]
-
-    # Identify minority and majority classes
-    unique_classes, class_counts = np.unique(labels_masked, return_counts=True)
-    minority_class = unique_classes[np.argmin(class_counts)]
-    majority_class = unique_classes[np.argmax(class_counts)]
-    
-    minority_count = np.min(class_counts)
-    majority_count = np.max(class_counts)
-
-    idx_minority = np.where(labels_masked == minority_class)[0]
-    idx_majority = np.where(labels_masked == majority_class)[0]
-
-    # Build kNN graph in feature space
-    nbrs = NearestNeighbors(n_neighbors=min(k_neighbors + 1, len(features_masked)), 
-                            metric=similarity_metric).fit(features_masked)
-    distances, indices = nbrs.kneighbors(features_masked[idx_minority])
-    # Remove self-loop (first neighbor is self)
-    indices = indices[:, 1:k_neighbors+1]
-
-    # Generate synthetic samples
-    rnd = np.random.RandomState(random_state)
-    n_synthetic = majority_count - minority_count
-    
-    synthetic_features = []
-    synthetic_labels = []
-    synthetic_neighbors = []  # Track which nodes were mixed
-
-    for i in range(n_synthetic):
-        # Randomly pick a minority sample
-        minority_idx = rnd.choice(len(idx_minority))
-        minority_node_idx = idx_mask[idx_minority[minority_idx]]
-        
-        # Get potential neighbors from both feature-space kNN and graph structure
-        feature_neighbors = idx_mask[indices[minority_idx]]
-        graph_neighbors = [n for n in adj_list[minority_node_idx] if n < len(labels_np)]
-        
-        # Combine and sample a neighbor
-        all_neighbors = list(set(list(feature_neighbors) + graph_neighbors))
-        if len(all_neighbors) == 0:
-            all_neighbors = list(feature_neighbors) if len(feature_neighbors) > 0 else [minority_node_idx]
-        
-        neighbor_idx = rnd.choice(all_neighbors)
-        
-        x_minority = features_np[minority_node_idx]
-        x_neighbor = features_np[neighbor_idx]
-        
-        # Generate synthetic sample
-        alpha = rnd.uniform(0, 1)
-        synthetic_sample = x_minority + alpha * (x_neighbor - x_minority)
-        synthetic_features.append(synthetic_sample)
-        synthetic_labels.append(minority_class)
-        synthetic_neighbors.append((minority_node_idx, neighbor_idx))
-
-    # Combine original and synthetic samples
-    synthetic_features = np.array(synthetic_features) if synthetic_features else np.empty((0, features_np.shape[1]))
-    synthetic_labels = np.array(synthetic_labels)
-
-    expanded_features = np.vstack([features_np, synthetic_features])
-    expanded_labels = np.concatenate([labels_np, synthetic_labels])
-
-    # Expand edge index: original edges + synthetic edges connecting synthetic nodes to neighbors
-    n_synthetic_nodes = len(synthetic_features)
-    synthetic_edge_index = []
-    for i, (neighbor1, neighbor2) in enumerate(synthetic_neighbors):
-        synthetic_node_idx = n_nodes + i
-        # Connect synthetic node to both original nodes it was interpolated from
-        synthetic_edge_index.append([neighbor1, synthetic_node_idx])
-        synthetic_edge_index.append([synthetic_node_idx, neighbor1])
-        synthetic_edge_index.append([neighbor2, synthetic_node_idx])
-        synthetic_edge_index.append([synthetic_node_idx, neighbor2])
-
-    if len(synthetic_edge_index) > 0:
-        synthetic_edge_index = np.array(synthetic_edge_index).T
-        expanded_edge_index = np.hstack([edge_index_np, synthetic_edge_index])
-    else:
-        expanded_edge_index = edge_index_np
-
-    # Create expanded mask
-    expanded_mask = np.zeros(len(expanded_labels), dtype=bool)
-    expanded_mask[:len(mask_np)] = mask_np
-    # Mark synthetic samples as part of training set
-    expanded_mask[len(labels_np):] = True
-
-    # Convert back to torch if input was torch
-    if is_torch_feat:
-        expanded_features = torch.from_numpy(expanded_features).to(features.dtype).to(features.device)
-    if is_torch_labels:
-        expanded_labels = torch.from_numpy(expanded_labels).to(labels.device)
-    if is_torch_mask:
-        expanded_mask = torch.from_numpy(expanded_mask).to(mask.device)
-    if is_torch_edges:
-        expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
-
-    return expanded_features, expanded_labels, expanded_mask, expanded_edge_index
+    return feature_smote_with_heuristic_edges(
+        mask=mask,
+        features=features,
+        labels=labels,
+        edge_index=edge_index,
+        k_neighbors=k_neighbors,
+        heuristic='knn',
+        random_state=random_state
+    )
 
 
 def adjust_mask_to_ratio(mask, labels, target_ratio, random_state=None):

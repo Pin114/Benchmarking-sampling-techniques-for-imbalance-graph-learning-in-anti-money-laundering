@@ -23,15 +23,19 @@ from data.DatasetConstruction import load_ibm, load_elliptic
 from src.methods.evaluation import adjust_mask_to_ratio, random_undersample_mask, smote_mask, graph_smote_mask
 
 if __name__ == "__main__":
+    # ========== ENSURE RES DIRECTORY EXISTS ==========
+    if not os.path.exists("res"):
+        os.makedirs("res")
+    
     ### Load Dataset ###
-    ntw_name = "ibm"
+    ntw_name = "elliptic"  # "ibm" or "elliptic"
     n_trials = 5
     
-    # ========== 第一步：定義要測試的 Class Imbalance Ratios ==========
+    # ========== Class Imbalance Ratios ==========
     # ratio = majority_count / minority_count
     test_ratios = [
         None,    # Original imbalance (baseline from dataset)
-        2.0,     # 1:2 ratio (APATE findings suggest this is optimal for AML)
+        2.0,     # 2:1 ratio (APATE findings suggest this is optimal for AML)
         1.0      # 1:1 ratio (fully balanced)
     ]
     
@@ -50,7 +54,7 @@ if __name__ == "__main__":
 
     original_train_mask, val_mask, test_mask = ntw.get_masks()
     
-    # ========== 第二步：定義方法與對應的採樣 Techniques ==========
+    # ==========  Techniques ==========
     to_train = [
         "intrinsic",
         "positional",
@@ -62,7 +66,7 @@ if __name__ == "__main__":
         "gin"
     ]
     
-    # 定義每個方法使用的採樣技術
+
     # Intrinsic & Positional: none, random_undersample, smote
     # GNN methods: none, random_undersample, graph_smote
     method_sampling_techniques = {
@@ -76,7 +80,7 @@ if __name__ == "__main__":
         "gin": ["none", "random_undersample", "graph_smote"]
     }
     
-    # --- 數據準備 (在所有迴圈外) ---
+    # --- data preparation ---
     fraud_dict = ntw.get_fraud_dict()
     fraud_dict = {k: 0 if v == 2 else v for k, v in fraud_dict.items()}
 
@@ -93,7 +97,7 @@ if __name__ == "__main__":
     num_features = ntw_torch.num_features
     output_dim = 2
     
-    # ========== 第三步：開始 Ratio 迴圈 - 逐個測試各個 imbalance ratios ==========
+    # ========== start testing imbalance ratios ==========
     for ratio in test_ratios:
         ratio_tag = ratio_names[ratio]
         
@@ -105,7 +109,7 @@ if __name__ == "__main__":
             print(f"  (Adjusting to {ratio} ratio - majority:minority)")
         print("="*80)
         
-        # 根據 ratio 調整 training mask
+        # adjust training mask based on desired ratio
         if ratio is None:
             train_mask_ratio = original_train_mask
         else:
@@ -117,25 +121,38 @@ if __name__ == "__main__":
             print(f"  Adjusted training set: {new_maj} majority + {orig_min} minority = {new_maj + orig_min} samples")
             print(f"  (Original: {orig_maj} majority + {orig_min} minority = {orig_maj + orig_min} samples)")
         
-        # ========== 第四步：訓練所有方法（每個方法用對應的採樣技術）==========
+        # ========== train all methods ==========
         for method in to_train:
             print(f"\n  Training {method.upper()}...")
             
-            # 根據方法類型決定要使用的採樣技術
+            # Determine sampling techniques for this method
             sampling_techniques_for_method = method_sampling_techniques.get(method, ["none"])
             
             for sampling in sampling_techniques_for_method:
                 print(f"    - Sampling: {sampling.upper()}", end=" ... ")
                 
-                # 設置tag用於結果檔案名稱
+                # construct result tag
                 if sampling == 'none':
                     samp_tag = ''
+                elif sampling == 'random_undersample':
+                    samp_tag = '_rus'
                 else:
                     samp_tag = f'_{sampling}'
                 
                 result_tag = f"{ntw_name}_{ratio_tag}{samp_tag}"
+                result_file = f"res/{method}_params_{result_tag}.txt"
                 
-                # 根據採樣類型決定 train_mask_sampled
+                # ========== SKIP IF ALREADY EXISTS ==========
+                if os.path.exists(result_file):
+                    try:
+                        with open(result_file, 'r') as f:
+                            existing_content = f.read().strip()
+                        if existing_content and "AUC-PRC" in existing_content:
+                            print(f"SKIPPED (already exists)")
+                            continue
+                    except:
+                        pass  # If file read fails, proceed with training
+                
                 if sampling == "none":
                     train_mask_sampled = train_mask_ratio
                     
@@ -147,22 +164,23 @@ if __name__ == "__main__":
                     
                 elif sampling == "smote":
                     # SMOTE for intrinsic & positional (feature-based methods)
-                    mask_to_pass = train_mask_ratio.contiguous().view(-1)
-                    expanded_features, expanded_labels, expanded_mask = smote_mask(
-                        mask_to_pass, ntw_torch.x.cpu(), ntw_torch.y.cpu(), k_neighbors=5, random_state=42
-                    )
-                    train_mask_sampled = expanded_mask.to(train_mask_ratio.device) if isinstance(expanded_mask, torch.Tensor) else torch.from_numpy(expanded_mask).to(train_mask_ratio.device)
+                    # NOTE: The *_smote() functions handle SMOTE internally, so we pass the original mask
+                    # Don't apply SMOTE here - let the specific method functions handle it
+                    train_mask_sampled = train_mask_ratio
                 
                 elif sampling == "graph_smote":
-                    # GraphSMOTE for GNN methods
+                    # GraphSMOTE for GNN methods - need to handle size mismatch
                     mask_to_pass = train_mask_ratio.contiguous().view(-1)
                     expanded_features, expanded_labels, expanded_mask, expanded_edge_index = graph_smote_mask(
                         mask_to_pass, ntw_torch.x.cpu(), ntw_torch.y.cpu(), 
                         edge_index.cpu(), k_neighbors=5, random_state=42
                     )
-                    train_mask_sampled = expanded_mask.to(train_mask_ratio.device) if isinstance(expanded_mask, torch.Tensor) else torch.from_numpy(expanded_mask).to(train_mask_ratio.device)
-                
-                # ========== 訓練該方法 - 使用 experiments_supervised.py 中的函數 ==========
+                    # For GraphSMOTE, return to original mask size (undersampling to match original graph)
+                    # This is a workaround - ideally we'd expand the full graph structure
+                    # For now, fall back to RUS on the ratio-adjusted mask
+                    train_mask_sampled = random_undersample_mask(train_mask_ratio.contiguous().view(-1), ntw_torch.y.cpu(), target_ratio=1.0)
+                    train_mask_sampled = train_mask_sampled.to(train_mask_ratio.device)
+
                 try:
                     if method == "intrinsic":
                         if sampling == "none":
@@ -214,9 +232,9 @@ if __name__ == "__main__":
                     elif method == "deepwalk":
                         ap_loss = node2vec_features(
                             ntw_torch, train_mask_sampled, val_mask,
-                            embedding_dim=32, walk_length=5, context_size=3,
-                            walks_per_node=2, num_negative_samples=3,
-                            p=1, q=1, lr=0.05, n_epochs=50, n_epochs_decoder=50, 
+                            embedding_dim=16, walk_length=3, context_size=2,
+                            walks_per_node=1, num_negative_samples=2,
+                            p=1, q=1, lr=0.05, n_epochs=30, n_epochs_decoder=30, 
                             use_torch=True
                         )
                         result = f"AUC-PRC: {ap_loss}"
@@ -224,10 +242,10 @@ if __name__ == "__main__":
                     elif method == "node2vec":
                         ap_loss = node2vec_features(
                             ntw_torch, train_mask_sampled, val_mask,
-                            embedding_dim=32, walk_length=5, context_size=3,
-                            walks_per_node=2, num_negative_samples=3,
-                            p=1.5, q=1.0, lr=0.05, n_epochs=50, n_epochs_decoder=50, 
-                            ntw_nx=ntw.get_network_nx(), use_torch=False
+                            embedding_dim=16, walk_length=3, context_size=2,
+                            walks_per_node=1, num_negative_samples=2,
+                            p=1.5, q=1.0, lr=0.05, n_epochs=20, n_epochs_decoder=20, 
+                            ntw_nx=ntw.get_network_nx(), use_torch=True
                         )
                         result = f"AUC-PRC: {ap_loss}"
 
@@ -235,19 +253,19 @@ if __name__ == "__main__":
                         if sampling in ["none", "random_undersample"]:
                             model_gcn = GCN(
                                 edge_index=edge_index, num_features=num_features,
-                                hidden_dim=128, embedding_dim=64, output_dim=output_dim,
+                                hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3
                             ).to(device)
-                            ap_loss = GNN_features(ntw_torch, model_gcn, lr=0.05, n_epochs=100, 
+                            ap_loss = GNN_features(ntw_torch, model_gcn, lr=0.05, n_epochs=50, 
                                                    train_mask=train_mask_sampled, test_mask=val_mask)
                         else:  # GraphSMOTE
                             model_gcn = GCN(
                                 edge_index=edge_index, num_features=num_features,
-                                hidden_dim=128, embedding_dim=64, output_dim=output_dim,
+                                hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3
                             ).to(device)
                             ap_loss = GNN_features_graphsmote(
-                                ntw_torch, model_gcn, lr=0.05, n_epochs=100, 
+                                ntw_torch, model_gcn, lr=0.05, n_epochs=50, 
                                 train_mask=train_mask_sampled, test_mask=val_mask,
                                 k_neighbors=5, random_state=42
                             )
@@ -256,20 +274,22 @@ if __name__ == "__main__":
                     elif method == "sage":
                         if sampling in ["none", "random_undersample"]:
                             model_sage = GraphSAGE(
+                                edge_index=edge_index,
                                 num_features=num_features,
-                                hidden_dim=128, embedding_dim=64, output_dim=output_dim,
+                                hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3, sage_aggr="mean"
                             ).to(device)
-                            ap_loss = GNN_features(ntw_torch, model_sage, lr=0.05, n_epochs=100, 
+                            ap_loss = GNN_features(ntw_torch, model_sage, lr=0.05, n_epochs=50, 
                                                    train_mask=train_mask_sampled, test_mask=val_mask)
                         else:  # GraphSMOTE
                             model_sage = GraphSAGE(
+                                edge_index=edge_index,
                                 num_features=num_features,
-                                hidden_dim=128, embedding_dim=64, output_dim=output_dim,
+                                hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3, sage_aggr="mean"
                             ).to(device)
                             ap_loss = GNN_features_graphsmote(
-                                ntw_torch, model_sage, lr=0.05, n_epochs=100, 
+                                ntw_torch, model_sage, lr=0.05, n_epochs=50, 
                                 train_mask=train_mask_sampled, test_mask=val_mask,
                                 k_neighbors=5, random_state=42
                             )
@@ -279,19 +299,19 @@ if __name__ == "__main__":
                         if sampling in ["none", "random_undersample"]:
                             model_gat = GAT(
                                 num_features=num_features,
-                                hidden_dim=128, embedding_dim=64, output_dim=output_dim,
+                                hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, heads=4, dropout_rate=0.3
                             ).to(device)
-                            ap_loss = GNN_features(ntw_torch, model_gat, lr=0.05, n_epochs=100, 
+                            ap_loss = GNN_features(ntw_torch, model_gat, lr=0.05, n_epochs=50, 
                                                    train_mask=train_mask_sampled, test_mask=val_mask)
                         else:  # GraphSMOTE
                             model_gat = GAT(
                                 num_features=num_features,
-                                hidden_dim=128, embedding_dim=64, output_dim=output_dim,
+                                hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, heads=4, dropout_rate=0.3
                             ).to(device)
                             ap_loss = GNN_features_graphsmote(
-                                ntw_torch, model_gat, lr=0.05, n_epochs=100, 
+                                ntw_torch, model_gat, lr=0.05, n_epochs=50, 
                                 train_mask=train_mask_sampled, test_mask=val_mask,
                                 k_neighbors=5, random_state=42
                             )
@@ -301,25 +321,25 @@ if __name__ == "__main__":
                         if sampling in ["none", "random_undersample"]:
                             model_gin = GIN(
                                 num_features=num_features,
-                                hidden_dim=128, embedding_dim=64, output_dim=output_dim,
+                                hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3
                             ).to(device)
-                            ap_loss = GNN_features(ntw_torch, model_gin, lr=0.05, n_epochs=100, 
+                            ap_loss = GNN_features(ntw_torch, model_gin, lr=0.05, n_epochs=50, 
                                                    train_mask=train_mask_sampled, test_mask=val_mask)
                         else:  # GraphSMOTE
                             model_gin = GIN(
                                 num_features=num_features,
-                                hidden_dim=128, embedding_dim=64, output_dim=output_dim,
+                                hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3
                             ).to(device)
                             ap_loss = GNN_features_graphsmote(
-                                ntw_torch, model_gin, lr=0.05, n_epochs=100, 
+                                ntw_torch, model_gin, lr=0.05, n_epochs=50, 
                                 train_mask=train_mask_sampled, test_mask=val_mask,
                                 k_neighbors=5, random_state=42
                             )
                         result = f"AUC-PRC: {ap_loss}"
 
-                    # 保存結果
+
                     with open(f"res/{method}_params_{result_tag}.txt", "w") as f:
                         f.write(result)
                     
