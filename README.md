@@ -139,7 +139,7 @@ python analyze_results.py
 python detailed_analysis.py
 ```
 
-## 🔬 Technical Details
+## Technical Details
 
 ### Methods (8 Total)
 
