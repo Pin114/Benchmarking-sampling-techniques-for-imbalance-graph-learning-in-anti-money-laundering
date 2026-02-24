@@ -1,14 +1,14 @@
 # Benchmarking Sampling Techniques for Imbalanced Graph Learning in Anti-Money Laundering
 
-## 📋 Overview
+##  Overview
 
 This project benchmarks various sampling techniques for graph representation learning on imbalanced transaction networks in the context of anti-money laundering (AML) detection. The research compares performance across **two major datasets** (Elliptic Bitcoin and IBM Transaction Network) and validates the **APATE hypothesis**: that a 2:1 (majority:minority) class imbalance ratio is optimal for AML model performance.
 
-## 🎯 Key Findings
+##  Key Findings
 
 ### Cross-Dataset Analysis
 
-✅ **APATE Hypothesis: PARTIALLY VALIDATED**
+ **APATE Hypothesis: PARTIALLY VALIDATED**
 
 The 2:1 class ratio shows consistent improvements across both datasets:
 
@@ -22,21 +22,21 @@ The 2:1 class ratio shows consistent improvements across both datasets:
 ### Dataset-Specific Insights
 
 **Elliptic Bitcoin Dataset:**
-- 🏆 Best Method: GAT (0.8555 avg AUC-PRC)
-- 🎨 Best Sampling: GraphSMOTE (+39.8% vs None)
+-  Best Method: GAT (0.8555 avg AUC-PRC)
+-  Best Sampling: GraphSMOTE (+39.8% vs None)
   - None: 0.5778
   - RUS: 0.6151
   - GraphSMOTE: 0.8092
-- 📊 Performance Range: 0.1197 (Positional) to 0.8555 (GAT)
+-  Performance Range: 0.1197 (Positional) to 0.8555 (GAT)
 - **Note**: GraphSMOTE is highly effective on Elliptic
 
 **IBM Transaction Dataset:**
-- 🏆 Best Methods: Intrinsic (0.0007994) & Node2Vec (0.0008003)
-- 🎨 Best Sampling: None (0.0007627)
+-  Best Methods: Intrinsic (0.0007994) & Node2Vec (0.0008003)
+-  Best Sampling: None (0.0007627)
   - None: 0.0007627
   - RUS: 0.0007591
   - GraphSMOTE: 0.0007385
-- 📊 Performance Range: 0.0006892 (GIN) to 0.0008003 (Node2Vec)
+-  Performance Range: 0.0006892 (GIN) to 0.0008003 (Node2Vec)
 - **Note**: GraphSMOTE is less effective on IBM; feature-based and embedding methods dominate
 
 ### Method Performance by Dataset
@@ -55,7 +55,7 @@ The 2:1 class ratio shows consistent improvements across both datasets:
 4. GAT (0.0007544) - GNNs less critical here
 5. Positional (0.0007121) - Positional features adequate
 
-## 🧪 Experimental Results
+##  Experimental Results
 
 - **Total Experiments**: 144 (2 datasets × 3 ratios × 8 methods × 3-4 samplings)
   - Elliptic: 72 experiments
@@ -63,7 +63,7 @@ The 2:1 class ratio shows consistent improvements across both datasets:
 - **Datasets**:
   - Elliptic Bitcoin: 203,769 nodes, unlabeled/illicit/licit classes
   - IBM Transaction Network: 500K nodes, 41 features, 1959:1 imbalance
-- **Status**: ✅ All 144 combinations completed and validated
+- **Status**:  All 144 combinations completed and validated
 
 
 

@@ -92,7 +92,7 @@ if __name__ == "__main__":
     
     # Find best ratio
     best_ratio = ratio_analysis['mean'].idxmax()
-    print(f"\n🏆 Best Ratio: {best_ratio} (Mean AUC-PRC: {ratio_analysis.loc[best_ratio, 'mean']:.6f})")
+    print(f"\n Best Ratio: {best_ratio} (Mean AUC-PRC: {ratio_analysis.loc[best_ratio, 'mean']:.6f})")
     
     # ========== analysis 2: by sampling technique ==========
     print("\n" + "=" * 100)
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     best_sampling = sampling_analysis['mean'].idxmax()
     worst_sampling = sampling_analysis['mean'].idxmin()
     improvement = (sampling_analysis.loc[best_sampling, 'mean'] - sampling_analysis.loc[worst_sampling, 'mean']) / sampling_analysis.loc[worst_sampling, 'mean'] * 100
-    print(f"\n🏆 Best Sampling: {best_sampling} (Mean AUC-PRC: {sampling_analysis.loc[best_sampling, 'mean']:.6f})")
+    print(f"\n Best Sampling: {best_sampling} (Mean AUC-PRC: {sampling_analysis.loc[best_sampling, 'mean']:.6f})")
     print(f" Compared to Worst Sampling ({worst_sampling}): {improvement:+.1f}%")
     
     # ========== analysis 3: by methods ==========
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     print("\n", method_analysis)
     
     best_method = method_analysis['mean'].idxmax()
-    print(f"\n🏆 Best Method: {best_method} (Mean AUC-PRC: {method_analysis.loc[best_method, 'mean']:.6f})")
+    print(f"\n Best Method: {best_method} (Mean AUC-PRC: {method_analysis.loc[best_method, 'mean']:.6f})")
     
     # ========== analysis 4: cross analysis (Ratio × Sampling) ==========
     print("\n" + "=" * 100)
@@ -174,7 +174,7 @@ if __name__ == "__main__":
     
     # ========== APATE hypothesis verification ==========
     print("\n" + "=" * 100)
-    print("🎯 APATE Hypothesis Verification (Is 2:1 Ratio Optimal for AML?)")
+    print(" APATE Hypothesis Verification (Is 2:1 Ratio Optimal for AML?)")
     print("=" * 100)
     
     ratio_means = df.groupby('ratio')['score'].mean().sort_values(ascending=False)
