@@ -70,7 +70,7 @@ The 2:1 class ratio shows consistent improvements across both datasets:
 
 
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```
 .
@@ -114,7 +114,7 @@ The 2:1 class ratio shows consistent improvements across both datasets:
 └── LICENSE                            # MIT License
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 ```bash
@@ -209,7 +209,7 @@ Original (1959:1): AUC-PRC = 0.000733 (-5.6%)
 
 **Intrinsic + 2:1 Ratio + SMOTE = AUC-PRC: 0.000948**
 
-## 📁 File Purpose Reference
+## File Purpose Reference
 
 | File | Purpose |
 |------|---------|
@@ -224,14 +224,14 @@ Original (1959:1): AUC-PRC = 0.000733 (-5.6%)
 | `data/DatasetConstruction.py` | IBM dataset loading and preprocessing |
 | `config/*.yaml` | Configuration templates for methods and datasets |
 
-## 📚 Documentation References
+## Documentation References
 
 - **`PROJECT_SCOPE.md`** - Research objectives and hypotheses
 - **`FEATURE_SMOTE_IMPLEMENTATION.md`** - Technical details of feature-space SMOTE
 - **`PROJECT_AUDIT.md`** - Integration validation and testing results
 - **`KNOWN_ISSUES.md`** - Known limitations and edge cases
 
-## 📖 Citation
+## Citation
 
 If you use this code, please cite:
 ```
@@ -241,10 +241,10 @@ If you use this code, please cite:
 }
 ```
 
-## 📝 License
+## License
 
 MIT License - See LICENSE file for details
 
-## 🤝 Contributing
+## Contributing
 
 Questions or issues? Check KNOWN_ISSUES.md or open an issue.
