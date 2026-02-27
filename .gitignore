@@ -425,7 +425,7 @@ venv/
 # If you want to ignore the whole res/ folder (e.g., if it contains only generated outputs),
 # uncomment the following line. By default we keep res/ tracked so experiment outputs
 # that should be versioned are preserved.
-res/
+#res/
 
 ### VisualStudio Patch ###
 # Additional files built by Visual Studio
