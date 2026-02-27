@@ -57,7 +57,7 @@ Implemented a practical alternative to complex graph-aware SMOTE methods, replac
 - Input: 60 majority + 5 minority samples (12:1 ratio)
 - Output: Expanded to 95 majority + 60 minority samples (1.58:1 ratio)
 - Edge Expansion: 198 → 528 edges (heuristic connections added)
-- **Status:** ✅ Passed validation
+- **Status:**  Passed validation
 
 ## Integration Points
 

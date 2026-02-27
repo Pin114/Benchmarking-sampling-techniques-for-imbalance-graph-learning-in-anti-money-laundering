@@ -74,6 +74,16 @@ To validate the APATE hypothesis, we test three class imbalance ratios:
 1. **Original (None)**: Dataset's natural imbalance ratio (baseline)
    - Elliptic: ~4:1
    - IBM: ~1,959:1
+   
+   > **Note:** the Elliptic dataset exhibits only a moderate class imbalance
+   > because it contains three labels (licit, illicit and unknown).  In our
+   > experiments we filter out the "unknown" class and treat the remaining
+   > samples as a binary problem; after this cleaning the ratio of licit to
+   > illicit transactions is roughly four-to-one.  In contrast, the IBM
+   > synthetic banking network has an extreme 1,959:1 imbalance between
+   > legitimate and fraudulent accounts, which is why the latter is often
+   > described as "severely" imbalanced while Elliptic is only "moderately"
+   > imbalanced.
 
 2. **2:1 Ratio (APATE Recommendation)**
    - Majority:minority = 2:1
