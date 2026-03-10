@@ -4,6 +4,8 @@
 
 This project systematically benchmarks sampling techniques for graph-based anti-money laundering (AML) detection across imbalanced transaction networks. We evaluate **8 graph representation learning methods** across **2 diverse datasets** with **3 sampling techniques** and **3 class imbalance ratios**, validating the **APATE hypothesis**: that a 2:1 (majority:minority) class imbalance ratio is optimal for AML model performance.
 
+Sampling is not one-size-fits-all: feature-based methods (Intrinsic/Positional) are paired with classical SMOTE, while graph/embedding methods (DeepWalk, Node2Vec, GNNs) use a custom GraphSMOTE variant; all techniques also support RUS and a no‑sampling baseline. This distinction ensures each method family is tested with the appropriate over/under‑sampling strategy.
+
 **Total Experiments**: 2 datasets × 3 ratios × 8 methods × 3 samplings = **144 independent trainings**
 
 ---
@@ -24,27 +26,22 @@ The 2:1 class ratio shows consistent improvements across both datasets:
 ### Dataset-Specific Performance
 
 **Elliptic Bitcoin Network** (203,769 nodes, ~4:1 imbalance):
-- **Best Method**: GAT (0.8555 AUC-PRC) with attention mechanisms
-- **Best Sampling**: GraphSMOTE (+39.8% vs None)
-  - None: 0.5778 | RUS: 0.6151 | GraphSMOTE: 0.8092
-- **Performance Range**: 0.1197 (Positional) to 0.8555 (GAT)
-- **Key Insight**: Graph structure and attention mechanisms highly effective
+- **Best Method**: GAT (0.9275 AUC-PRC) with GraphSMOTE and attention mechanisms
+- **Best Sampling**: GraphSMOTE (+31.8% vs None)
+  - None: 0.6137 | RUS: 0.6151 | GraphSMOTE: 0.8092
+- **Performance Range**: 0.1013 (Positional) to 0.9275 (GAT)
+- **Key Insight**: Graph structure with attention mechanisms + GraphSMOTE achieves outstanding performance
 
 **IBM Transaction Network** (500K nodes, 1,959:1 imbalance):
-- **Best Methods**: Node2Vec (0.0008003) & Intrinsic (0.0007994)
-- **Best Sampling**: None (0.0007627) - sampling shows limited benefit
-  - None: 0.0007627 | RUS: 0.0007591 | GraphSMOTE: 0.0007385
-- **Performance Range**: 0.0006892 (GIN) to 0.0008003 (Node2Vec)
-- **Key Insight**: Simple features and walk-based embeddings more stable
+- **Best Method**: Intrinsic + SMOTE (0.0009479 AUC-PRC)
+- **Best Sampling**: Feature-based SMOTE (+2.3% vs None)
+  - SMOTE: 0.0007771 | None: 0.0007598 | RUS: 0.0007588 | GraphSMOTE: 0.0007394
+- **Key Insight**: Feature-based methods excel with SMOTE sampling; graph-based methods less consistent
 
-### Method Rankings
 
-**By Category (Averaged across ratios/samplings):**
-1. **Embedding Methods**: 0.000781 (DeepWalk, Node2Vec)
-2. **Feature-Based**: 0.000756 (Intrinsic, Positional)
-3. **GNN Methods**: 0.000743 (GCN, SAGE, GAT, GIN)
-
-**Best Combination**: **Intrinsic + 2:1 Ratio + SMOTE = 0.000948 AUC-PRC**
+**Best Performing Configuration Globally**:
+- **Elliptic**: GAT + Original Ratio + GraphSMOTE = 0.9275 AUC-PRC (highest overall)
+- **IBM**: Intrinsic + 2:1 Ratio + SMOTE = 0.0009479 AUC-PRC
 
 ---
 
@@ -60,8 +57,8 @@ The 2:1 class ratio shows consistent improvements across both datasets:
 ├── src/
 │   ├── methods/
 │   │   ├── experiments_supervised.py  # 8 method training implementations
-│   │   ├── evaluation.py              # Sampling functions & metrics (739 lines)
-│   │   ├── feature_smote_heuristic.py # GraphSMOTE implementation (130 lines)
+│   │   ├── evaluation.py              # Sampling functions & metrics
+│   │   ├── feature_smote_heuristic.py # GraphSMOTE implementation 
 │   │   └── utils/
 │   │       ├── GNN.py                 # GNN models (GCN, SAGE, GAT, GIN)
 │   │       ├── decoder.py             # Neural decoders (4 variants)
@@ -69,9 +66,9 @@ The 2:1 class ratio shows consistent improvements across both datasets:
 │   │       ├── functionsNetworKit.py  # NetworKit scalable algorithms
 │   │       └── functionsTorch.py      # PyTorch utilities
 │   ├── utils/
-│   │   └── Network.py                 # network_AML wrapper class (177 lines)
+│   │   └── Network.py                 # network_AML wrapper class 
 │   └── data/
-│       └── DatasetConstruction.py     # Dataset loading & splitting (168 lines)
+│       └── DatasetConstruction.py     # Dataset loading & splitting 
 ├── data/
 │   └── data/
 │       ├── elliptic_bitcoin_dataset/
@@ -80,7 +77,7 @@ The 2:1 class ratio shows consistent improvements across both datasets:
 │       │   └── elliptic_txs_classes.csv
 │       └── IBM/
 │           └── HI-Small_Trans.csv
-├── res/                               # Results directory (144 result files)
+├── res/                               # Results directory 
 ├── config/                            # Configuration files (YAML)
 ├── requirements.txt
 └── LICENSE
@@ -304,36 +301,50 @@ where:
 ```
 Dataset Loading
     ↓
-┌───────────────────────────────────────┐
-│ Ratio Adjustment (adjust_mask_to_ratio) │
-├───────────────────────────────────────┤
-│ Target Ratio: None / 2.0 / 1.0        │
-│ Method: Undersampling majority class   │
-│ Output: Adjusted boolean mask          │
-└───────────────────────────────────────┘
-    ↓
-┌───────────────────────────────────────┐
-│ Sampling Technique Application        │
-├───────────────────────────────────────┤
-│ None                                   │
-│  → Use mask as-is                     │
-│                                        │
-│ Random Undersampling                  │
-│  → RUS to 1:1 ratio                   │
-│                                        │
-│ SMOTE / GraphSMOTE                    │
-│  → Feature-space synthesis             │
-│  → Expand features/labels/edges        │
-└───────────────────────────────────────┘
-    ↓
-┌───────────────────────────────────────┐
-│ Method Training                       │
-├───────────────────────────────────────┤
-│ intrinsic_features() / ...            │
-│ GNN_features() / ...                  │
-│ Train on expanded dataset              │
-│ Evaluate on test set (unchanged)      │
-└───────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│ FOR EACH RATIO (3 iterations: Original, 2:1, 1:1) │
+├─────────────────────────────────────────────────┤
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │ Ratio Adjustment (adjust_mask_to_ratio)  │   │
+│  ├──────────────────────────────────────────┤   │
+│  │ Target Ratio: None / 2.0 / 1.0           │   │
+│  │ Method: Undersampling majority class     │   │
+│  │ Output: Ratio-adjusted boolean mask      │   │
+│  └──────────────────────────────────────────┘   │
+│    ↓                                             │
+│  FOR EACH METHOD (8 methods)                    │
+│    ↓                                             │
+│    FOR EACH SAMPLING (3 techniques)             │
+│      ↓                                           │
+│    ┌────────────────────────────────────────┐   │
+│    │ Sampling Technique Application         │   │
+│    ├────────────────────────────────────────┤   │
+│    │ INPUT: Ratio-adjusted mask             │   │
+│    │                                         │   │
+│    │ None                                    │   │
+│    │  → Use ratio-adjusted mask as-is       │   │
+│    │                                         │   │
+│    │ Random Undersampling                   │   │
+│    │  → RUS to 1:1 ratio                    │   │
+│    │                                         │   │
+│    │ SMOTE / GraphSMOTE                     │   │
+│    │  → Feature-space synthesis              │   │
+│    │  → Expand features/labels/edges         │   │
+│    └────────────────────────────────────────┘   │
+│      ↓                                           │
+│    ┌────────────────────────────────────────┐   │
+│    │ Method Training                        │   │
+│    ├────────────────────────────────────────┤   │
+│    │ intrinsic_features() / ...             │   │
+│    │ GNN_features() / ...                   │   │
+│    │ Train on sampled dataset                │   │
+│    │ Evaluate on test set (unchanged)       │   │
+│    └────────────────────────────────────────┘   │
+│      ↓                                           │
+│    Save Result File                             │
+│                                                  │
+└─────────────────────────────────────────────────┘
     ↓
 Result: {method}_params_{dataset}_{ratio}_{sampling}.txt
 ```
