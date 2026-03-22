@@ -18,14 +18,19 @@ def parse_results():
     for filename in os.listdir(res_dir):
         if not filename.endswith('.txt'):
             continue
-        
-        # Parse filename: {method}_params_ibm_{ratio}{sampling}.txt
-        base = filename.replace("_params_ibm_", "|").replace(".txt", "") # ibm or elliptic
+
+        # Determine whether this file contains AUC-PRC or F1
+        if "_f1_params_" in filename:
+            metric = "F1"
+            base = filename.replace("_f1_params_ibm_", "|").replace("_f1_params_elliptic_", "|").replace(".txt", "")
+        else:
+            metric = "AUC-PRC"
+            base = filename.replace("_params_ibm_", "|").replace("_params_elliptic_", "|").replace(".txt", "")
+
         parts = base.split("|")
-        
         if len(parts) != 2:
             continue
-        
+
         method = parts[0]
         rest = parts[1]
         
@@ -54,15 +59,22 @@ def parse_results():
         try:
             with open(filepath) as f:
                 content = f.read().strip()
-            if "AUC-PRC:" in content:
+
+            if metric == "AUC-PRC" and "AUC-PRC:" in content:
                 score = float(content.split("AUC-PRC:")[1].strip())
-                results.append({
-                    'method': method,
-                    'ratio': ratio,
-                    'sampling': sampling,
-                    'score': score,
-                    'filename': filename
-                })
+            elif metric == "F1" and "F1:" in content:
+                score = float(content.split("F1:")[1].strip())
+            else:
+                continue
+
+            results.append({
+                'method': method,
+                'ratio': ratio,
+                'sampling': sampling,
+                'metric': metric,
+                'score': score,
+                'filename': filename
+            })
         except Exception as e:
             print(f"Error reading {filename}: {e}")
     
@@ -81,18 +93,93 @@ if __name__ == "__main__":
         print("files not found or no valid results parsed.")
         sys.exit(1)
     
-    # ========== analysis 1: according to ratios ==========
-    print("=" * 100)
-    print("  Analysis by Class Imbalance Ratio (Verify APATE Hypothesis: Is 2:1 Optimal?)")
-    print("=" * 100)
-    
-    ratio_analysis = df.groupby('ratio')['score'].agg(['count', 'mean', 'std', 'min', 'max'])
-    ratio_analysis = ratio_analysis.sort_values('mean', ascending=False)
-    print("\n", ratio_analysis)
-    
-    # Find best ratio
-    best_ratio = ratio_analysis['mean'].idxmax()
-    print(f"\n Best Ratio: {best_ratio} (Mean AUC-PRC: {ratio_analysis.loc[best_ratio, 'mean']:.6f})")
+    def metric_analysis(df, metric_name):
+        sub = df[df['metric'] == metric_name]
+        if len(sub) == 0:
+            print(f"No {metric_name} results found.")
+            return
+
+        percentile_note = "(F1 score uses quantile thresholding: 99% for intrinsic/positional/embedding, 90% for GNN)" if metric_name == "F1" else ""
+        print("\n" + "=" * 100)
+        print(f"  {metric_name} Analysis {percentile_note}")
+        print("=" * 100)
+
+        # ratio analysis
+        ratio_analysis = sub.groupby('ratio')['score'].agg(['count', 'mean', 'std', 'min', 'max'])
+        ratio_analysis = ratio_analysis.sort_values('mean', ascending=False)
+        print("\n", ratio_analysis)
+
+        best_ratio = ratio_analysis['mean'].idxmax()
+        print(f"\n Best Ratio for {metric_name}: {best_ratio} (Mean {metric_name}: {ratio_analysis.loc[best_ratio, 'mean']:.6f})")
+
+        # sampling analysis
+        print("\n" + "=" * 100)
+        print(f"  Sampling Technique Analysis for {metric_name}")
+        print("=" * 100)
+        sampling_analysis = sub.groupby('sampling')['score'].agg(['count', 'mean', 'std', 'min', 'max'])
+        sampling_analysis = sampling_analysis.sort_values('mean', ascending=False)
+        print("\n", sampling_analysis)
+
+        best_sampling = sampling_analysis['mean'].idxmax()
+        worst_sampling = sampling_analysis['mean'].idxmin()
+        improvement = (sampling_analysis.loc[best_sampling, 'mean'] - sampling_analysis.loc[worst_sampling, 'mean']) / sampling_analysis.loc[worst_sampling, 'mean'] * 100
+        print(f"\n Best Sampling: {best_sampling} (Mean {metric_name}: {sampling_analysis.loc[best_sampling, 'mean']:.6f})")
+        print(f" Compared to Worst Sampling ({worst_sampling}): {improvement:+.1f}%")
+
+        # method analysis
+        print("\n" + "=" * 100)
+        print(f"  Method Analysis for {metric_name}")
+        print("=" * 100)
+        method_analysis = sub.groupby('method')['score'].agg(['count', 'mean', 'std', 'min', 'max'])
+        method_analysis = method_analysis.sort_values('mean', ascending=False)
+        print("\n", method_analysis)
+
+        best_method = method_analysis['mean'].idxmax()
+        print(f"\n Best Method: {best_method} (Mean {metric_name}: {method_analysis.loc[best_method, 'mean']:.6f})")
+
+        # cross analysis
+        print("\n" + "=" * 100)
+        print(f"  Cross Analysis (Ratio × Sampling) for {metric_name}")
+        print("=" * 100)
+        cross_pivot = sub.pivot_table(values='score', index='ratio', columns='sampling', aggfunc='mean')
+        print("\n", cross_pivot)
+
+        print("\n" + "=" * 100)
+        print(f"  Cross Analysis (Method × Ratio) for {metric_name}")
+        print("=" * 100)
+        method_ratio_pivot = sub.pivot_table(values='score', index='method', columns='ratio', aggfunc='mean')
+        print("\n", method_ratio_pivot)
+
+        print("\n" + "=" * 100)
+        print(f"  Cross Analysis (Method × Sampling) for {metric_name}")
+        print("=" * 100)
+        method_sampling_pivot = sub.pivot_table(values='score', index='method', columns='sampling', aggfunc='mean')
+        print("\n", method_sampling_pivot)
+
+        print("\n" + "=" * 100)
+        print(f"  Statistical Summary for {metric_name}")
+        print("=" * 100)
+        print(f"\n  • Mean {metric_name}: {sub['score'].mean():.6f}")
+        print(f"  • Std Dev: {sub['score'].std():.6f}")
+        print(f"  • Max: {sub['score'].max():.6f}")
+        print(f"  • Min: {sub['score'].min():.6f}")
+        print(f"  • Median: {sub['score'].median():.6f}")
+
+        print("\n" + "=" * 100)
+        print(f"  APATE Hypothesis (for {metric_name})")
+        print("=" * 100)
+        ratio_means = sub.groupby('ratio')['score'].mean().sort_values(ascending=False)
+        for i, (ratio, score) in enumerate(ratio_means.items(), 1):
+            marker = " Hypothesis Validated" if ratio == "2:1" and i == 1 else "Wrong" if ratio == "2:1" and i != 1 else ""
+            print(f"  {i}. {ratio:10} → {score:.6f}{marker}")
+        if ratio_means.index[0] == "2:1":
+            print("\n  APATE Hypothesis Confirmed (2:1 is best).")
+        else:
+            print(f"\n  APATE Hypothesis not confirmed ({ratio_means.index[0]} is best).")
+
+    # Execute for both metrics
+    metric_analysis(df, "AUC-PRC")
+    metric_analysis(df, "F1")
     
     # ========== analysis 2: by sampling technique ==========
     print("\n" + "=" * 100)
@@ -180,7 +267,7 @@ if __name__ == "__main__":
     ratio_means = df.groupby('ratio')['score'].mean().sort_values(ascending=False)
     print("\nSorted by Mean AUC-PRC:")
     for i, (ratio, score) in enumerate(ratio_means.items(), 1):
-        marker = " Hypothesis Validated" if ratio == "2:1" and i == 1 else "❌" if ratio == "2:1" and i != 1 else ""
+        marker = " Hypothesis Validated" if ratio == "2:1" and i == 1 else "Wrong" if ratio == "2:1" and i != 1 else ""
         print(f"  {i}. {ratio:10} → {score:.6f} {marker}")
     
     if ratio_means.index[0] == "2:1":

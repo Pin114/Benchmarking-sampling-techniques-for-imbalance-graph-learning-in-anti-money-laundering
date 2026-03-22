@@ -1,6 +1,7 @@
 import os 
 import sys
 import torch
+import argparse
 
 # ---------------- Environment Setup ----------------
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -23,12 +24,16 @@ from data.DatasetConstruction import load_ibm, load_elliptic
 from src.methods.evaluation import adjust_mask_to_ratio, random_undersample_mask, smote_mask, graph_smote_mask
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Run supervised training with AUC or F1 evaluation.')
+    parser.add_argument('--mode', choices=['auc', 'f1'], default='auc', help='Choose to run AUC or F1 evaluation')
+    args = parser.parse_args()
+    
     # ========== ENSURE RES DIRECTORY EXISTS ==========
     if not os.path.exists("res"):
         os.makedirs("res")
     
     ### Load Dataset ###
-    ntw_name = "elliptic"  # "ibm" or "elliptic"
+    ntw_name = "ibm"  # "ibm" or "elliptic"
     n_trials = 5
     
     # ========== Class Imbalance Ratios ==========
@@ -140,14 +145,21 @@ if __name__ == "__main__":
                     samp_tag = f'_{sampling}'
                 
                 result_tag = f"{ntw_name}_{ratio_tag}{samp_tag}"
-                result_file = f"res/{method}_params_{result_tag}.txt"
+                
+                # Set filename based on mode
+                if args.mode == 'auc':
+                    result_file = f"res/{method}_params_{result_tag}.txt"
+                    check_content = "AUC-PRC"
+                else:
+                    result_file = f"res/{method}_f1_params_{result_tag}.txt"
+                    check_content = "F1:"
                 
                 # ========== SKIP IF ALREADY EXISTS ==========
                 if os.path.exists(result_file):
                     try:
                         with open(result_file, 'r') as f:
                             existing_content = f.read().strip()
-                        if existing_content and "AUC-PRC" in existing_content:
+                        if existing_content and check_content in existing_content:
                             print(f"SKIPPED (already exists)")
                             continue
                     except:
@@ -184,26 +196,26 @@ if __name__ == "__main__":
                 try:
                     if method == "intrinsic":
                         if sampling == "none":
-                            ap_loss = intrinsic_features(
+                            ap_loss, f1_loss = intrinsic_features(
                                 ntw, train_mask_sampled, val_mask,
                                 n_layers_decoder=2, hidden_dim_decoder=16, lr=0.05, n_epochs_decoder=100
                             )
                         elif sampling == "random_undersample":
-                            ap_loss = intrinsic_features(
+                            ap_loss, f1_loss = intrinsic_features(
                                 ntw, train_mask_sampled, val_mask,
                                 n_layers_decoder=2, hidden_dim_decoder=16, lr=0.05, n_epochs_decoder=100
                             )
                         else:  # SMOTE
-                            ap_loss = intrinsic_features_smote(
+                            ap_loss, f1_loss = intrinsic_features_smote(
                                 ntw, train_mask_sampled, val_mask,
                                 n_layers_decoder=2, hidden_dim_decoder=16, lr=0.05, n_epochs_decoder=100,
                                 k_neighbors=5, random_state=42
                             )
-                        result = f"AUC-PRC: {ap_loss}"
+                        result = f"AUC-PRC: {ap_loss}, F1: {f1_loss}"
 
                     elif method == "positional":
                         if sampling == "none":
-                            ap_loss = positional_features(
+                            ap_loss, f1_loss = positional_features(
                                 ntw, train_mask_sampled, val_mask,
                                 alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=0.05,
                                 fraud_dict_test=fraud_dict,
@@ -211,7 +223,7 @@ if __name__ == "__main__":
                                 ntw_name=ntw_name+"_train"
                             )
                         elif sampling == "random_undersample":
-                            ap_loss = positional_features(
+                            ap_loss, f1_loss = positional_features(
                                 ntw, train_mask_sampled, val_mask,
                                 alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=0.05,
                                 fraud_dict_test=fraud_dict,
@@ -219,7 +231,7 @@ if __name__ == "__main__":
                                 ntw_name=ntw_name+"_train"
                             )
                         else:  # SMOTE
-                            ap_loss = positional_features_smote(
+                            ap_loss, f1_loss = positional_features_smote(
                                 ntw, train_mask_sampled, val_mask,
                                 alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=0.05,
                                 fraud_dict_test=fraud_dict,
@@ -227,27 +239,27 @@ if __name__ == "__main__":
                                 ntw_name=ntw_name+"_train",
                                 k_neighbors=5, random_state=42
                             )
-                        result = f"AUC-PRC: {ap_loss}"
+                        result = f"AUC-PRC: {ap_loss}, F1: {f1_loss}"
 
                     elif method == "deepwalk":
-                        ap_loss = node2vec_features(
+                        ap_loss, f1_loss = node2vec_features(
                             ntw_torch, train_mask_sampled, val_mask,
                             embedding_dim=16, walk_length=3, context_size=2,
                             walks_per_node=1, num_negative_samples=2,
                             p=1, q=1, lr=0.05, n_epochs=30, n_epochs_decoder=30, 
                             use_torch=True
                         )
-                        result = f"AUC-PRC: {ap_loss}"
+                        result = f"AUC-PRC: {ap_loss}, F1: {f1_loss}"
 
                     elif method == "node2vec":
-                        ap_loss = node2vec_features(
+                        ap_loss, f1_loss = node2vec_features(
                             ntw_torch, train_mask_sampled, val_mask,
                             embedding_dim=16, walk_length=3, context_size=2,
                             walks_per_node=1, num_negative_samples=2,
                             p=1.5, q=1.0, lr=0.05, n_epochs=20, n_epochs_decoder=20, 
                             ntw_nx=ntw.get_network_nx(), use_torch=True
                         )
-                        result = f"AUC-PRC: {ap_loss}"
+                        result = f"AUC-PRC: {ap_loss}, F1: {f1_loss}"
 
                     elif method == "gcn":
                         if sampling in ["none", "random_undersample"]:
@@ -256,7 +268,7 @@ if __name__ == "__main__":
                                 hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3
                             ).to(device)
-                            ap_loss = GNN_features(ntw_torch, model_gcn, lr=0.05, n_epochs=50, 
+                            ap_loss, f1_loss = GNN_features(ntw_torch, model_gcn, lr=0.05, n_epochs=50, 
                                                    train_mask=train_mask_sampled, test_mask=val_mask)
                         else:  # GraphSMOTE
                             model_gcn = GCN(
@@ -264,12 +276,12 @@ if __name__ == "__main__":
                                 hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3
                             ).to(device)
-                            ap_loss = GNN_features_graphsmote(
+                            ap_loss, f1_loss = GNN_features_graphsmote(
                                 ntw_torch, model_gcn, lr=0.05, n_epochs=50, 
                                 train_mask=train_mask_sampled, test_mask=val_mask,
                                 k_neighbors=5, random_state=42
                             )
-                        result = f"AUC-PRC: {ap_loss}"
+                        result = f"AUC-PRC: {ap_loss}, F1: {f1_loss}"
 
                     elif method == "sage":
                         if sampling in ["none", "random_undersample"]:
@@ -279,7 +291,7 @@ if __name__ == "__main__":
                                 hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3, sage_aggr="mean"
                             ).to(device)
-                            ap_loss = GNN_features(ntw_torch, model_sage, lr=0.05, n_epochs=50, 
+                            ap_loss, f1_loss = GNN_features(ntw_torch, model_sage, lr=0.05, n_epochs=50, 
                                                    train_mask=train_mask_sampled, test_mask=val_mask)
                         else:  # GraphSMOTE
                             model_sage = GraphSAGE(
@@ -288,12 +300,12 @@ if __name__ == "__main__":
                                 hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3, sage_aggr="mean"
                             ).to(device)
-                            ap_loss = GNN_features_graphsmote(
+                            ap_loss, f1_loss = GNN_features_graphsmote(
                                 ntw_torch, model_sage, lr=0.05, n_epochs=50, 
                                 train_mask=train_mask_sampled, test_mask=val_mask,
                                 k_neighbors=5, random_state=42
                             )
-                        result = f"AUC-PRC: {ap_loss}"
+                        result = f"AUC-PRC: {ap_loss}, F1: {f1_loss}"
 
                     elif method == "gat":
                         if sampling in ["none", "random_undersample"]:
@@ -302,7 +314,7 @@ if __name__ == "__main__":
                                 hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, heads=4, dropout_rate=0.3
                             ).to(device)
-                            ap_loss = GNN_features(ntw_torch, model_gat, lr=0.05, n_epochs=50, 
+                            ap_loss, f1_loss = GNN_features(ntw_torch, model_gat, lr=0.05, n_epochs=50, 
                                                    train_mask=train_mask_sampled, test_mask=val_mask)
                         else:  # GraphSMOTE
                             model_gat = GAT(
@@ -310,12 +322,12 @@ if __name__ == "__main__":
                                 hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, heads=4, dropout_rate=0.3
                             ).to(device)
-                            ap_loss = GNN_features_graphsmote(
+                            ap_loss, f1_loss = GNN_features_graphsmote(
                                 ntw_torch, model_gat, lr=0.05, n_epochs=50, 
                                 train_mask=train_mask_sampled, test_mask=val_mask,
                                 k_neighbors=5, random_state=42
                             )
-                        result = f"AUC-PRC: {ap_loss}"
+                        result = f"AUC-PRC: {ap_loss}, F1: {f1_loss}"
 
                     elif method == "gin":
                         if sampling in ["none", "random_undersample"]:
@@ -324,7 +336,7 @@ if __name__ == "__main__":
                                 hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3
                             ).to(device)
-                            ap_loss = GNN_features(ntw_torch, model_gin, lr=0.05, n_epochs=50, 
+                            ap_loss, f1_loss = GNN_features(ntw_torch, model_gin, lr=0.05, n_epochs=50, 
                                                    train_mask=train_mask_sampled, test_mask=val_mask)
                         else:  # GraphSMOTE
                             model_gin = GIN(
@@ -332,15 +344,22 @@ if __name__ == "__main__":
                                 hidden_dim=64, embedding_dim=32, output_dim=output_dim,
                                 n_layers=2, dropout_rate=0.3
                             ).to(device)
-                            ap_loss = GNN_features_graphsmote(
+                            ap_loss, f1_loss = GNN_features_graphsmote(
                                 ntw_torch, model_gin, lr=0.05, n_epochs=50, 
                                 train_mask=train_mask_sampled, test_mask=val_mask,
                                 k_neighbors=5, random_state=42
                             )
+                        result = f"AUC-PRC: {ap_loss}, F1: {f1_loss}"
+
+
+                    if args.mode == 'auc':
                         result = f"AUC-PRC: {ap_loss}"
+                        filename = f"res/{method}_params_{result_tag}.txt"
+                    else:
+                        result = f"F1: {f1_loss}"
+                        filename = f"res/{method}_f1_params_{result_tag}.txt"
 
-
-                    with open(f"res/{method}_params_{result_tag}.txt", "w") as f:
+                    with open(filename, "w") as f:
                         f.write(result)
                     
                     print(f"Done! {result}")

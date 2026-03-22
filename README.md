@@ -106,12 +106,16 @@ python train_supervised.py
 ### Analyze Results
 
 ```bash
-# Quick single-dataset analysis
+# Quick single-dataset analysis 
 python analyze_results.py
 
-# Comprehensive multi-dataset analysis + APATE validation
+# Comprehensive multi-dataset analysis + APATE validation (includes both metrics, F1 percentile annotation in output)
 python detailed_analysis.py
 ```
+
+- `analyze_results.py` and `detailed_analysis.py` will now parse both `AUC-PRC` files (`*_params_*`) and `F1` files (`*_f1_params_*`).
+- F1 scores are computed using the same threshold strategy as training: 99th percentile for intrinsic/positional/embedding training, 90th percentile for GNN training.
+
 
 ---
 
@@ -450,32 +454,6 @@ Examples:
 - Epochs: 100-150
 - Early stopping: Validation loss threshold
 
----
-
-## Statistical Analysis Plan
-
-### Primary Hypothesis
-**H1**: The 2:1 class ratio achieves significantly higher AUC-PRC than 1:1 balanced ratio
-- **Test**: Paired t-test (α=0.05)
-- **Expected result**: 2:1 mean AUC-PRC > 1:1 mean AUC-PRC
-
-### Secondary Hypotheses
-**H2**: Sampling technique effect varies by method category
-- **Test**: Two-way ANOVA (method_category × sampling_technique)
-
-**H3**: Dataset type influences optimal sampling strategy
-- **Test**: Dataset × Ratio × Sampling interaction analysis
-
-### Effect Size Metrics
-- Percentage improvement: $\frac{\text{AUC-PRC}_{2:1} - \text{AUC-PRC}_{1:1}}{\text{AUC-PRC}_{1:1}} \times 100\%$
-- Spearman correlation: Rank order consistency across datasets
-- Cohen's d: Effect size for performance differences
-
-### Multiple Comparison Correction
-- **Bonferroni correction**: $\alpha_{adjusted} = \frac{0.05}{144} \approx 0.0003$
-- **Justification**: 144 experiment combinations require multiple comparison correction
-
----
 
 ## Datasets
 

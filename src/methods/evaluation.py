@@ -264,7 +264,7 @@ def random_undersample_mask(mask, labels, target_ratio=1.0, random_state=None):
         return _torch.from_numpy(new_mask)
     return new_mask
 
-def evaluate_model_shallow_AUC(model, x_test, y_test, device = "cpu"):
+def evaluate_model_shallow_AUC(model, x_test, y_test, device = "cpu", percentile_q=99):
     model.eval()
 
     x_test = x_test.to(device)
@@ -275,7 +275,12 @@ def evaluate_model_shallow_AUC(model, x_test, y_test, device = "cpu"):
     AUC = roc_auc_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     AP = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    return(AUC, AP)
+    # Calculate F1 at the specified percentile
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
+    y_pred_hard = (y_pred[:,1] >= cutoff)*1
+    F1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard.cpu().detach().numpy())
+
+    return(AUC, AP, F1)
 
 def evaluate_model_shallow_PRF(model, x_test, y_test, percentile_q = 99, device = "cpu"):
     model.eval()
@@ -380,7 +385,7 @@ def evaluate_model_deep(data, model, test_mask, percentile_q_list = [99], n_samp
 
     return(AUC_list, AP_list, precision_dict, recall_dict, F1_dict)
 
-def evaluate_model_deep_AUC(data, model, test_mask, device="cpu", loader=None, use_intrinsic=True):
+def evaluate_model_deep_AUC(data, model, test_mask, device="cpu", loader=None, use_intrinsic=True, percentile_q=90):
     model.eval()
     test_mask_new = resample_mask(test_mask)
     if loader is None:
@@ -408,7 +413,12 @@ def evaluate_model_deep_AUC(data, model, test_mask, device="cpu", loader=None, u
     AUC = roc_auc_score(y.cpu().detach().numpy(), y_hat.cpu().detach().numpy()[:,1])
     AP = average_precision_score(y.cpu().detach().numpy(), y_hat.cpu().detach().numpy()[:,1])
 
-    return(AUC, AP)
+    # Calculate F1 at the specified percentile
+    cutoff = np.percentile(y_hat.cpu().detach().numpy()[:,1], percentile_q)
+    y_hat_hard = (y_hat[:,1] >= cutoff)*1
+    F1 = f1_score(y.cpu().detach().numpy(), y_hat_hard.cpu().detach().numpy())
+
+    return(AUC, AP, F1)
     
 def evaluate_model_deep_PRF(data, model, test_mask, percentile_q=90, device="cpu", loader=None, use_intrinsic=True):
     model.eval()

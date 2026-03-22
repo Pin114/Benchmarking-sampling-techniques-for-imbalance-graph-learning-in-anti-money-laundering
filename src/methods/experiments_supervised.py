@@ -235,7 +235,14 @@ def positional_features(
 
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    return(ap_score)
+    # Calculate F1 at 99th percentile
+    import numpy as np
+    from sklearn.metrics import f1_score
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 99)
+    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
+    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
+
+    return(ap_score, f1)
 
 
 
@@ -415,7 +422,14 @@ def node2vec_features(
 
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    return(ap_score)
+    # Calculate F1 at 99th percentile
+    import numpy as np
+    from sklearn.metrics import f1_score
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 99)
+    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
+    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
+
+    return(ap_score, f1)
 
 
 
@@ -629,6 +643,13 @@ def GNN_features(
 
         ap_score = average_precision_score(y.cpu().detach().numpy(), y_hat.cpu().detach().numpy()[:,1])
 
+        # Calculate F1 at 90th percentile
+        import numpy as np
+        from sklearn.metrics import f1_score
+        cutoff = np.percentile(y_hat.cpu().detach().numpy()[:,1], 90)
+        y_pred_hard = (y_hat.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
+        f1 = f1_score(y.cpu().detach().numpy(), y_pred_hard)
+
     except: # Just test accuarcy (more than one class)
 
         pred = out.argmax(dim=1)
@@ -636,8 +657,10 @@ def GNN_features(
         test_correct = pred[ntw_torch.test_mask] == ntw_torch.y[ntw_torch.test_mask]  # Check against ground-truth labels.
 
         ap_score = int(test_correct.sum()) / int(ntw_torch.test_mask.sum())
+
+        f1 = ap_score  # Approximation
     
-    return ap_score
+    return ap_score, f1
 
 
 def intrinsic_features_smote(
@@ -690,7 +713,14 @@ def intrinsic_features_smote(
     y_pred = y_pred.softmax(dim=1)
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    return ap_score
+    # Calculate F1 at 99th percentile
+    import numpy as np
+    from sklearn.metrics import f1_score
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 99)
+    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
+    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
+
+    return ap_score, f1
 
 
 def positional_features_smote(
@@ -778,7 +808,14 @@ def positional_features_smote(
     y_pred = y_pred.softmax(dim=1)
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    return ap_score
+    # Calculate F1 at 99th percentile
+    import numpy as np
+    from sklearn.metrics import f1_score
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 99)
+    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
+    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
+
+    return ap_score, f1
 
 
 def GNN_features_graphsmote(
@@ -858,12 +895,19 @@ def GNN_features_graphsmote(
 
     try:
         ap_score = average_precision_score(y[test_mask].cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
+        # Calculate F1 at 90th percentile
+        import numpy as np
+        from sklearn.metrics import f1_score
+        cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 90)
+        y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
+        f1 = f1_score(y[test_mask].cpu().detach().numpy(), y_pred_hard)
     except:
         pred = y_hat[test_mask].argmax(dim=1)
         test_correct = pred == y[test_mask]
         ap_score = int(test_correct.sum()) / int(test_mask.sum())
+        f1 = ap_score  # Approximation
 
-    return ap_score 
+    return ap_score, f1 
 
 
 
