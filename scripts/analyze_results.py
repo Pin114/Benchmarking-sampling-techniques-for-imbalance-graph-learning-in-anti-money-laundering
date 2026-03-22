@@ -4,6 +4,7 @@ import sys
 import pandas as pd
 import numpy as np
 from collections import defaultdict
+from datetime import datetime
 
 # Setup paths
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +19,14 @@ def parse_results():
     for filename in os.listdir(res_dir):
         if not filename.endswith('.txt'):
             continue
+
+        # Determine dataset
+        if "_ibm_" in filename:
+            dataset = "IBM"
+        elif "_elliptic_" in filename:
+            dataset = "Elliptic"
+        else:
+            continue  # Skip if not matching
 
         # Determine whether this file contains AUC-PRC or F1
         if "_f1_params_" in filename:
@@ -68,6 +77,7 @@ def parse_results():
                 continue
 
             results.append({
+                'dataset': dataset,
                 'method': method,
                 'ratio': ratio,
                 'sampling': sampling,
@@ -177,102 +187,146 @@ if __name__ == "__main__":
         else:
             print(f"\n  APATE Hypothesis not confirmed ({ratio_means.index[0]} is best).")
 
-    # Execute for both metrics
-    metric_analysis(df, "AUC-PRC")
-    metric_analysis(df, "F1")
+def main():
+    # Create analysis_reports folder if it doesn't exist
+    reports_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'analysis_reports')
+    os.makedirs(reports_dir, exist_ok=True)
     
-    # ========== analysis 2: by sampling technique ==========
-    print("\n" + "=" * 100)
-    print("  Analysis by Sampling Technique (Evaluate SMOTE/GraphSMOTE Effectiveness)")
-    print("=" * 100)
+    # Parse all results
+    results = parse_results()
+    df = pd.DataFrame(results)
     
-    sampling_analysis = df.groupby('sampling')['score'].agg(['count', 'mean', 'std', 'min', 'max'])
-    sampling_analysis = sampling_analysis.sort_values('mean', ascending=False)
-    print("\n", sampling_analysis)
+    if len(df) == 0:
+        print("files not found or no valid results parsed.")
+        sys.exit(1)
     
-    best_sampling = sampling_analysis['mean'].idxmax()
-    worst_sampling = sampling_analysis['mean'].idxmin()
-    improvement = (sampling_analysis.loc[best_sampling, 'mean'] - sampling_analysis.loc[worst_sampling, 'mean']) / sampling_analysis.loc[worst_sampling, 'mean'] * 100
-    print(f"\n Best Sampling: {best_sampling} (Mean AUC-PRC: {sampling_analysis.loc[best_sampling, 'mean']:.6f})")
-    print(f" Compared to Worst Sampling ({worst_sampling}): {improvement:+.1f}%")
+    # Get unique datasets
+    datasets = df['dataset'].unique()
     
-    # ========== analysis 3: by methods ==========
-    print("\n" + "=" * 100)
-    print("  Analysis by Methods (Comparing 8 Methods Performance)")
-    print("=" * 100)
+    for dataset in datasets:
+        dataset_df = df[df['dataset'] == dataset]
+        report_file = os.path.join(reports_dir, f'{dataset.lower()}_analysis.txt')
+        
+        print(f"Generating analysis report for {dataset}...")
+        
+        # Redirect output to file
+        with open(report_file, 'w') as f:
+            # Save original stdout
+            original_stdout = sys.stdout
+            sys.stdout = f
+            
+            print(f"Analysis Report for {dataset} Dataset")
+            print("=" * 100)
+            print(f"Total results: {len(dataset_df)}")
+            print(f"Date generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print("=" * 100)
+            
+            # Execute metric analysis for both metrics
+            metric_analysis(dataset_df, "AUC-PRC")
+            metric_analysis(dataset_df, "F1")
+            
+            # ========== analysis 2: by sampling technique ==========
+            print("\n" + "=" * 100)
+            print("  Analysis by Sampling Technique (Evaluate SMOTE/GraphSMOTE Effectiveness)")
+            print("=" * 100)
+            
+            sampling_analysis = dataset_df.groupby('sampling')['score'].agg(['count', 'mean', 'std', 'min', 'max'])
+            sampling_analysis = sampling_analysis.sort_values('mean', ascending=False)
+            print("\n", sampling_analysis)
+            
+            best_sampling = sampling_analysis['mean'].idxmax()
+            worst_sampling = sampling_analysis['mean'].idxmin()
+            improvement = (sampling_analysis.loc[best_sampling, 'mean'] - sampling_analysis.loc[worst_sampling, 'mean']) / sampling_analysis.loc[worst_sampling, 'mean'] * 100
+            print(f"\n Best Sampling: {best_sampling} (Mean AUC-PRC: {sampling_analysis.loc[best_sampling, 'mean']:.6f})")
+            print(f" Compared to Worst Sampling ({worst_sampling}): {improvement:+.1f}%")
+            
+            # ========== analysis 3: by methods ==========
+            print("\n" + "=" * 100)
+            print("  Analysis by Methods (Comparing 8 Methods Performance)")
+            print("=" * 100)
+            
+            method_analysis = dataset_df.groupby('method')['score'].agg(['count', 'mean', 'std', 'min', 'max'])
+            method_analysis = method_analysis.sort_values('mean', ascending=False)
+            print("\n", method_analysis)
+            
+            best_method = method_analysis['mean'].idxmax()
+            print(f"\n Best Method: {best_method} (Mean AUC-PRC: {method_analysis.loc[best_method, 'mean']:.6f})")
+            
+            # ========== analysis 4: cross analysis (Ratio × Sampling) ==========
+            print("\n" + "=" * 100)
+            print("  Cross Analysis: Ratio × Sampling Technique")
+            print("=" * 100)
+            
+            cross_analysis = dataset_df.groupby(['ratio', 'sampling'])['score'].agg(['count', 'mean'])
+            cross_pivot = dataset_df.pivot_table(values='score', index='ratio', columns='sampling', aggfunc='mean')
+            print("\n", cross_pivot)
+            
+            # ========== analysis 5: cross analysis (Ratio × Method) ==========
+            print("\n" + "=" * 100)
+            print("  Cross Analysis: Ratio × Methods")
+            print("=" * 100)
+            
+            method_ratio_pivot = dataset_df.pivot_table(values='score', index='method', columns='ratio', aggfunc='mean')
+            print("\n", method_ratio_pivot)
+            
+            # ========== analysis 6: cross analysis (Method × Sampling) ==========
+            print("\n" + "=" * 100)
+            print("  Cross Analysis: Methods × Sampling Technique")
+            print("=" * 100)
+            
+            method_sampling_pivot = dataset_df.pivot_table(values='score', index='method', columns='sampling', aggfunc='mean')
+            print("\n", method_sampling_pivot)
+            
+            # ========== analysis 7: best and worst combinations ==========
+            print("\n" + "=" * 100)
+            print("  Best and Worst Combinations")
+            print("=" * 100)
+            
+            top5 = dataset_df.nlargest(5, 'score')[['method', 'ratio', 'sampling', 'score']]
+            print("\n Top 5 Best Combinations:")
+            for idx, row in top5.iterrows():
+                print(f"   {row['method']:12} | {row['ratio']:8} | {row['sampling']:12} → {row['score']:.6f}")
+            
+            bottom5 = dataset_df.nsmallest(5, 'score')[['method', 'ratio', 'sampling', 'score']]
+            print("\n Bottom 5 Worst Combinations:")
+            for idx, row in bottom5.iterrows():
+                print(f"   {row['method']:12} | {row['ratio']:8} | {row['sampling']:12} → {row['score']:.6f}")
+            
+            # ========== statistical summary ==========
+            print("\n" + "=" * 100)
+            print(" Statistical Summary")  
+            print("=" * 100)
+            print("\nOverall Results Statistics:")
+            print(f"  • Mean AUC-PRC:    {dataset_df['score'].mean():.6f}")
+            print(f"  • Standard Deviation: {dataset_df['score'].std():.6f}")
+            print(f"  • Maximum Score:   {dataset_df['score'].max():.6f}")
+            print(f"  • Minimum Score:   {dataset_df['score'].min():.6f}")
+            print(f"  • Median:          {dataset_df['score'].median():.6f}")
+            
+            # ========== APATE hypothesis verification ==========
+            print("\n" + "=" * 100)
+            print(" APATE Hypothesis Verification (Is 2:1 Ratio Optimal for AML?)")
+            print("=" * 100)
+            
+            ratio_means = dataset_df.groupby('ratio')['score'].mean().sort_values(ascending=False)
+            print("\nSorted by Mean AUC-PRC:")
+            for i, (ratio, score) in enumerate(ratio_means.items(), 1):
+                marker = " Hypothesis Validated" if ratio == "2:1" and i == 1 else "Wrong" if ratio == "2:1" and i != 1 else ""
+                print(f"  {i}. {ratio:10} → {score:.6f} {marker}")
+            
+            if ratio_means.index[0] == "2:1":
+                print("\n APATE Hypothesis Confirmed: 2:1 Ratio Indeed Performs Best!")
+            else:
+                print(f"\n  APATE Hypothesis Needs Revision: {ratio_means.index[0]} Performs Best, Not 2:1")
+            
+            print("\n" + "=" * 100)
+            
+            # Restore original stdout
+            sys.stdout = original_stdout
+        
+        print(f"Report saved to: {report_file}")
     
-    method_analysis = df.groupby('method')['score'].agg(['count', 'mean', 'std', 'min', 'max'])
-    method_analysis = method_analysis.sort_values('mean', ascending=False)
-    print("\n", method_analysis)
-    
-    best_method = method_analysis['mean'].idxmax()
-    print(f"\n Best Method: {best_method} (Mean AUC-PRC: {method_analysis.loc[best_method, 'mean']:.6f})")
-    
-    # ========== analysis 4: cross analysis (Ratio × Sampling) ==========
-    print("\n" + "=" * 100)
-    print("  Cross Analysis: Ratio × Sampling Technique")
-    print("=" * 100)
-    
-    cross_analysis = df.groupby(['ratio', 'sampling'])['score'].agg(['count', 'mean'])
-    cross_pivot = df.pivot_table(values='score', index='ratio', columns='sampling', aggfunc='mean')
-    print("\n", cross_pivot)
-    
-    # ========== analysis 5: cross analysis (Ratio × Method) ==========
-    print("\n" + "=" * 100)
-    print("  Cross Analysis: Ratio × Methods")
-    print("=" * 100)
-    
-    method_ratio_pivot = df.pivot_table(values='score', index='method', columns='ratio', aggfunc='mean')
-    print("\n", method_ratio_pivot)
-    
-    # ========== analysis 6: cross analysis (Method × Sampling) ==========
-    print("\n" + "=" * 100)
-    print("  Cross Analysis: Methods × Sampling Technique")
-    print("=" * 100)
-    
-    method_sampling_pivot = df.pivot_table(values='score', index='method', columns='sampling', aggfunc='mean')
-    print("\n", method_sampling_pivot)
-    
-    # ========== analysis 7: best and worst combinations ==========
-    print("\n" + "=" * 100)
-    print("  Best and Worst Combinations")
-    print("=" * 100)
-    
-    top5 = df.nlargest(5, 'score')[['method', 'ratio', 'sampling', 'score']]
-    print("\n Top 5 Best Combinations:")
-    for idx, row in top5.iterrows():
-        print(f"   {row['method']:12} | {row['ratio']:8} | {row['sampling']:12} → {row['score']:.6f}")
-    
-    bottom5 = df.nsmallest(5, 'score')[['method', 'ratio', 'sampling', 'score']]
-    print("\n Bottom 5 Worst Combinations:")
-    for idx, row in bottom5.iterrows():
-        print(f"   {row['method']:12} | {row['ratio']:8} | {row['sampling']:12} → {row['score']:.6f}")
-    
-    # ========== statistical summary ==========
-    print("\n" + "=" * 100)
-    print(" Statistical Summary")  
-    print("=" * 100)
-    print("\nOverall Results Statistics:")
-    print(f"  • Mean AUC-PRC:    {df['score'].mean():.6f}")
-    print(f"  • Standard Deviation: {df['score'].std():.6f}")
-    print(f"  • Maximum Score:   {df['score'].max():.6f}")
-    print(f"  • Minimum Score:   {df['score'].min():.6f}")
-    print(f"  • Median:          {df['score'].median():.6f}")
-    
-    # ========== APATE hypothesis verification ==========
-    print("\n" + "=" * 100)
-    print(" APATE Hypothesis Verification (Is 2:1 Ratio Optimal for AML?)")
-    print("=" * 100)
-    
-    ratio_means = df.groupby('ratio')['score'].mean().sort_values(ascending=False)
-    print("\nSorted by Mean AUC-PRC:")
-    for i, (ratio, score) in enumerate(ratio_means.items(), 1):
-        marker = " Hypothesis Validated" if ratio == "2:1" and i == 1 else "Wrong" if ratio == "2:1" and i != 1 else ""
-        print(f"  {i}. {ratio:10} → {score:.6f} {marker}")
-    
-    if ratio_means.index[0] == "2:1":
-        print("\n APATE Hypothesis Confirmed: 2:1 Ratio Indeed Performs Best!")
-    else:
-        print(f"\n  APATE Hypothesis Needs Revision: {ratio_means.index[0]} Performs Best, Not 2:1")
-    
-    print("\n" + "=" * 100)
+    print("\nAll dataset analysis reports generated successfully!")
+
+if __name__ == "__main__":
+    main()
