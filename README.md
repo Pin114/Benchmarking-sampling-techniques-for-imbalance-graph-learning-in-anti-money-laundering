@@ -113,8 +113,8 @@ python analyze_results.py
 python detailed_analysis.py
 ```
 
-- `analyze_results.py` and `detailed_analysis.py` will now parse both `AUC-PRC` files (`*_params_*`) and `F1` files (`*_f1_params_*`).
-- F1 scores are computed using the same threshold strategy as training: 99th percentile for intrinsic/positional/embedding training, 90th percentile for GNN training.
+- `analyze_results.py` and `detailed_analysis.py` will now parse both `AUC-PRC` files (`*_params_*`) and `F1` files (`*_f1_90_params_*` and `*_f1_99_params_*`).
+- F1 scores are computed using quantile thresholding: F1_90 uses 90th percentile, F1_99 uses 99th percentile for all methods.
 
 
 ---
@@ -270,6 +270,24 @@ where:
 - $R(\tau) = \frac{TP(\tau)}{TP(\tau) + FN(\tau)}$ (Recall)
 
 **Implementation**: scikit-learn `average_precision_score()`
+
+### Secondary Metric: F1 Score (with Quantile Thresholding)
+
+**Why F1 with quantile thresholding?**
+- Standard F1 uses 0.5 threshold (inappropriate for imbalanced data)
+- Quantile thresholding adapts to prediction distribution
+- Two thresholds tested: 90th and 99th percentiles
+- Provides complementary view to AUC-PRC
+
+**Formula**:
+$$\text{F1} = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}$$
+
+where threshold is set at the q-th percentile of positive predictions.
+
+**Implementation**: 
+- F1_90: `cutoff = np.percentile(y_pred[:,1], 90)`
+- F1_99: `cutoff = np.percentile(y_pred[:,1], 99)`
+- `y_pred_hard = (y_pred[:,1] >= cutoff).astype(int)`
 
 ### Train-Validation-Test Split
 

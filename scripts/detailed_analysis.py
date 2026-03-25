@@ -19,7 +19,19 @@ def parse_results():
         if not filename.endswith('.txt'):
             continue
 
-        if "_f1_params_" in filename:
+        if "_f1_" in filename and "_params_" in filename:
+            # New format: method_f1_90_params_... or method_f1_99_params_...
+            if "_f1_90_params_" in filename:
+                metric = "F1_90"
+            elif "_f1_99_params_" in filename:
+                metric = "F1_99"
+            else:
+                continue
+            base = filename.replace("_f1_90_params_ibm_", "|").replace("_f1_90_params_elliptic_", "|") \
+                          .replace("_f1_99_params_ibm_", "|").replace("_f1_99_params_elliptic_", "|") \
+                          .replace(".txt", "")
+        elif "_f1_params_" in filename:
+            # Old format: method_f1_params_...
             metric = "F1"
             base = filename.replace("_f1_params_ibm_", "|").replace("_f1_params_elliptic_", "|").replace(".txt", "")
         else:
@@ -63,6 +75,10 @@ def parse_results():
                 score = float(content.split("AUC-PRC:")[1].strip())
             elif metric == "F1" and "F1:" in content:
                 score = float(content.split("F1:")[1].strip())
+            elif metric == "F1_90" and "F1_90:" in content:
+                score = float(content.split("F1_90:")[1].strip())
+            elif metric == "F1_99" and "F1_99:" in content:
+                score = float(content.split("F1_99:")[1].strip())
             else:
                 continue
 
@@ -95,7 +111,14 @@ if __name__ == "__main__":
             return
 
         print("\n" + "=" * 100)
-        print(f" Detailed {metric_name} Summary (F1 percentile: 99% intrinsic/embedding, 90% GNN data pipeline)")
+        if metric_name == 'AUC-PRC':
+            print(f" Detailed {metric_name} Summary (F1 percentile: 99% intrinsic/embedding, 90% GNN data pipeline)")
+        elif metric_name == 'F1_90':
+            print(f" Detailed F1 Summary (90th percentile threshold)")
+        elif metric_name == 'F1_99':
+            print(f" Detailed F1 Summary (99th percentile threshold)")
+        else:
+            print(f" Detailed {metric_name} Summary")
         print("=" * 100)
 
         ratio_stats = sub.groupby('ratio')['score'].agg(['count', 'mean', 'std', 'min', 'max']).round(6).sort_values('mean', ascending=False)
@@ -116,4 +139,5 @@ if __name__ == "__main__":
             print(f"  {i}. {ratio}: {score:.6f}{marker}")
 
     metric_summary(df, 'AUC-PRC')
-    metric_summary(df, 'F1')
+    metric_summary(df, 'F1_90')
+    metric_summary(df, 'F1_99')

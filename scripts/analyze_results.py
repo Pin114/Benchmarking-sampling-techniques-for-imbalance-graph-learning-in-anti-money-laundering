@@ -29,7 +29,19 @@ def parse_results():
             continue  # Skip if not matching
 
         # Determine whether this file contains AUC-PRC or F1
-        if "_f1_params_" in filename:
+        if "_f1_" in filename and "_params_" in filename:
+            # New format: method_f1_90_params_... or method_f1_99_params_...
+            if "_f1_90_params_" in filename:
+                metric = "F1_90"
+            elif "_f1_99_params_" in filename:
+                metric = "F1_99"
+            else:
+                continue
+            base = filename.replace("_f1_90_params_ibm_", "|").replace("_f1_90_params_elliptic_", "|") \
+                          .replace("_f1_99_params_ibm_", "|").replace("_f1_99_params_elliptic_", "|") \
+                          .replace(".txt", "")
+        elif "_f1_params_" in filename:
+            # Old format: method_f1_params_...
             metric = "F1"
             base = filename.replace("_f1_params_ibm_", "|").replace("_f1_params_elliptic_", "|").replace(".txt", "")
         else:
@@ -73,6 +85,10 @@ def parse_results():
                 score = float(content.split("AUC-PRC:")[1].strip())
             elif metric == "F1" and "F1:" in content:
                 score = float(content.split("F1:")[1].strip())
+            elif metric == "F1_90" and "F1_90:" in content:
+                score = float(content.split("F1_90:")[1].strip())
+            elif metric == "F1_99" and "F1_99:" in content:
+                score = float(content.split("F1_99:")[1].strip())
             else:
                 continue
 
@@ -109,7 +125,7 @@ if __name__ == "__main__":
             print(f"No {metric_name} results found.")
             return
 
-        percentile_note = "(F1 score uses quantile thresholding: 99% for intrinsic/positional/embedding, 90% for GNN)" if metric_name == "F1" else ""
+        percentile_note = "(F1_90 uses 90th percentile thresholding, F1_99 uses 99th percentile thresholding)" if metric_name in ["F1_90", "F1_99"] else ""
         print("\n" + "=" * 100)
         print(f"  {metric_name} Analysis {percentile_note}")
         print("=" * 100)
@@ -223,7 +239,8 @@ def main():
             
             # Execute metric analysis for both metrics
             metric_analysis(dataset_df, "AUC-PRC")
-            metric_analysis(dataset_df, "F1")
+            metric_analysis(dataset_df, "F1_90")
+            metric_analysis(dataset_df, "F1_99")
             
             # ========== analysis 2: by sampling technique ==========
             print("\n" + "=" * 100)

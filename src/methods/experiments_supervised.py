@@ -32,6 +32,80 @@ def intrinsic_features(
 
         ntw, train_mask, test_mask,
 
+        n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder,
+
+        percentile_q=99
+
+):
+
+    device_decoder = (
+
+        "cuda"
+
+        if torch.cuda.is_available()
+
+        else "mps"
+
+        if torch.backends.mps.is_available()
+
+        else "cpu"
+
+    )
+
+
+
+    X_train, y_train, X_test, y_test = ntw.get_train_test_split_intrinsic(train_mask, test_mask, device=device_decoder)
+
+
+
+    decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
+
+
+
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
+
+    criterion = nn.CrossEntropyLoss()
+
+
+
+    for epoch in range(n_epochs_decoder):
+
+        decoder.train()
+
+        optimizer.zero_grad()
+
+        output = decoder(X_train)
+
+        loss = criterion(output, y_train)
+
+        loss.backward()
+
+        optimizer.step()
+
+
+
+    decoder.eval()
+
+    y_pred = decoder(X_test)
+
+    y_pred = y_pred.softmax(dim=1)
+
+    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
+
+    # Calculate F1 at specified percentile
+    import numpy as np
+    from sklearn.metrics import f1_score
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
+    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
+    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
+
+    return(ap_score, f1)
+
+
+def intrinsic_features_with_predictions(
+
+        ntw, train_mask, test_mask,
+
         n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder
 
 ):
@@ -90,7 +164,8 @@ def intrinsic_features(
 
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    return(ap_score)
+    # Return predictions for multiple F1 calculations
+    return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
 
 
 
@@ -103,6 +178,160 @@ def positional_features(
         alpha_ppr: float,
 
         n_epochs_decoder: list, 
+
+        lr: float,
+
+        fraud_dict_train: dict = None, 
+
+        fraud_dict_test: dict = None,
+
+        n_layers_decoder: int = 2,
+
+        hidden_dim_decoder: int = 5,
+
+        ntw_name: str = None,
+
+        use_intrinsic: bool = False,
+
+        percentile_q: int = 99
+
+        ):
+
+    
+
+    print("intrinsic and summary: ")
+
+    X = ntw.get_features(full=True)
+
+    
+
+    print("networkx: ")
+
+    ntw_nx = ntw.get_network_nx()
+
+    features_nx_df = local_features_nx(ntw_nx, alpha_pr, alpha_ppr, fraud_dict_train=fraud_dict_train, ntw_name=ntw_name)
+
+
+
+    ## Train NetworkKit
+
+    print("networkit: ")
+
+    ntw_nk = ntw.get_network_nk()
+
+    features_nk_df = features_nk(ntw_nk, ntw_name=ntw_name)
+
+
+
+    ## Concatenate features
+
+    if use_intrinsic:
+
+        features_df = pd.concat([X, features_nx_df, features_nk_df], axis=1)
+
+    else:
+
+        features_df = pd.concat([features_nx_df, features_nk_df], axis=1)
+
+    features_df["fraud"] = [fraud_dict_test[x] for x in features_df.index]
+
+
+
+    device_decoder = (
+
+        "cuda"
+
+        if torch.cuda.is_available()
+
+        else "mps"
+
+        if torch.backends.mps.is_available()
+
+        else "cpu"
+
+    )
+
+
+
+    features_df_train = features_df[train_mask.numpy()]
+
+
+    # FIX 1: Add errors='ignore' in drop function
+    # This allows Pandas to ignore errors if PSP or fraud columns don't exist and continue execution
+    x_train_features = features_df_train.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    x_train = torch.tensor(x_train_features, dtype=torch.float32).to(device_decoder)
+    y_train = torch.tensor(features_df_train["fraud"].values, dtype=torch.long).to(device_decoder)
+
+
+
+    features_df_test = features_df[test_mask.numpy()]
+
+
+    # FIX 2: Add errors='ignore' in drop function for test set
+    x_test_features = features_df_test.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    x_test = torch.tensor(x_test_features, dtype=torch.float32).to(device_decoder)
+    y_test = torch.tensor(features_df_test["fraud"].values, dtype=torch.long).to(device_decoder)
+
+
+
+    decoder = Decoder_deep_norm(x_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
+
+
+
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
+
+    criterion = nn.CrossEntropyLoss()
+
+
+
+    for epoch in range(n_epochs_decoder):
+
+        decoder.train()
+
+        optimizer.zero_grad()
+
+        output = decoder(x_train)
+
+        loss = criterion(output, y_train)
+
+        loss.backward()
+
+        optimizer.step()
+
+        #print(f"Epoch {epoch+1}: Loss: {loss.item()}")
+
+    
+
+    decoder.eval()
+
+    y_pred = decoder(x_test)
+
+    y_pred = y_pred.softmax(dim=1)
+
+
+
+    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
+
+    # Calculate F1 at specified percentile
+    import numpy as np
+    from sklearn.metrics import f1_score
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
+    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
+    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
+
+    return(ap_score, f1)
+
+
+
+def positional_features_with_predictions(
+
+        ntw, train_mask, test_mask,
+
+        alpha_pr: float,
+
+        alpha_ppr: float,
+
+        n_epochs_decoder: int, 
 
         lr: float,
 
@@ -235,14 +464,8 @@ def positional_features(
 
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    # Calculate F1 at 99th percentile
-    import numpy as np
-    from sklearn.metrics import f1_score
-    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 99)
-    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
-    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
-
-    return(ap_score, f1)
+    # Return predictions for multiple F1 calculations
+    return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
 
 
 
@@ -274,7 +497,9 @@ def node2vec_features(
 
         use_torch = False, 
 
-        use_intrinsic=True
+        use_intrinsic=True,
+
+        percentile_q=99
 
 ):
 
@@ -422,10 +647,10 @@ def node2vec_features(
 
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    # Calculate F1 at 99th percentile
+    # Calculate F1 at specified percentile
     import numpy as np
     from sklearn.metrics import f1_score
-    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 99)
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
     y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
     f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
 
@@ -451,7 +676,9 @@ def GNN_features(
 
         test_mask: torch.Tensor = None,
 
-        use_intrinsic: bool = True
+        use_intrinsic: bool = True,
+
+        percentile_q: int = 99
 
 ):
 
@@ -643,10 +870,10 @@ def GNN_features(
 
         ap_score = average_precision_score(y.cpu().detach().numpy(), y_hat.cpu().detach().numpy()[:,1])
 
-        # Calculate F1 at 90th percentile
+        # Calculate F1 at specified percentile
         import numpy as np
         from sklearn.metrics import f1_score
-        cutoff = np.percentile(y_hat.cpu().detach().numpy()[:,1], 90)
+        cutoff = np.percentile(y_hat.cpu().detach().numpy()[:,1], percentile_q)
         y_pred_hard = (y_hat.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
         f1 = f1_score(y.cpu().detach().numpy(), y_pred_hard)
 
@@ -666,7 +893,8 @@ def GNN_features(
 def intrinsic_features_smote(
         ntw, train_mask, test_mask,
         n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder,
-        k_neighbors=5, random_state=None
+        k_neighbors=5, random_state=None,
+        percentile_q=99
 ):
     """
     Intrinsic features with SMOTE over-sampling for minority class.
@@ -713,14 +941,69 @@ def intrinsic_features_smote(
     y_pred = y_pred.softmax(dim=1)
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    # Calculate F1 at 99th percentile
+    # Calculate F1 at specified percentile
     import numpy as np
     from sklearn.metrics import f1_score
-    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 99)
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
     y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
     f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
 
     return ap_score, f1
+
+
+def intrinsic_features_smote_with_predictions(
+        ntw, train_mask, test_mask,
+        n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder,
+        k_neighbors=5, random_state=None
+):
+    """
+    Intrinsic features with SMOTE over-sampling for minority class.
+    Returns predictions for multiple F1 calculations.
+    """
+    device_decoder = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
+
+    X_train, y_train, X_test, y_test = ntw.get_train_test_split_intrinsic(train_mask, test_mask, device=device_decoder)
+
+    # Apply SMOTE to training data
+    # Create a temporary mask for training samples
+    train_mask_temp = torch.ones(X_train.shape[0], dtype=torch.bool)
+    X_train_smote, y_train_smote, _ = smote_mask(
+        train_mask_temp, X_train, y_train, 
+        k_neighbors=k_neighbors, 
+        random_state=random_state
+    )
+
+    # Convert back to torch tensors if needed
+    if not isinstance(X_train_smote, torch.Tensor):
+        X_train_smote = torch.from_numpy(X_train_smote).to(device=device_decoder, dtype=X_train.dtype)
+    if not isinstance(y_train_smote, torch.Tensor):
+        y_train_smote = torch.from_numpy(y_train_smote).to(device=device_decoder)
+
+    decoder = Decoder_deep_norm(X_train_smote.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
+    criterion = nn.CrossEntropyLoss()
+
+    for epoch in range(n_epochs_decoder):
+        decoder.train()
+        optimizer.zero_grad()
+        output = decoder(X_train_smote)
+        loss = criterion(output, y_train_smote)
+        loss.backward()
+        optimizer.step()
+
+    decoder.eval()
+    y_pred = decoder(X_test)
+    y_pred = y_pred.softmax(dim=1)
+    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
+
+    # Return predictions for multiple F1 calculations
+    return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
 
 
 def positional_features_smote(
@@ -736,7 +1019,8 @@ def positional_features_smote(
         ntw_name: str = None,
         use_intrinsic: bool = False,
         k_neighbors: int = 5,
-        random_state: int = None
+        random_state: int = None,
+        percentile_q: int = 99
 ):
     """
     Positional features with SMOTE over-sampling for minority class.
@@ -808,14 +1092,104 @@ def positional_features_smote(
     y_pred = y_pred.softmax(dim=1)
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
 
-    # Calculate F1 at 99th percentile
+    # Calculate F1 at specified percentile
     import numpy as np
     from sklearn.metrics import f1_score
-    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 99)
+    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
     y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
     f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
 
     return ap_score, f1
+
+
+def positional_features_smote_with_predictions(
+        ntw, train_mask, test_mask,
+        alpha_pr: float,
+        alpha_ppr: float,
+        n_epochs_decoder: int,
+        lr: float,
+        fraud_dict_train: dict = None,
+        fraud_dict_test: dict = None,
+        n_layers_decoder: int = 2,
+        hidden_dim_decoder: int = 5,
+        ntw_name: str = None,
+        use_intrinsic: bool = False,
+        k_neighbors: int = 5,
+        random_state: int = None
+):
+    """
+    Positional features with SMOTE over-sampling for minority class.
+    Returns predictions for multiple F1 calculations.
+    """
+    print("intrinsic and summary: ")
+    X = ntw.get_features(full=True)
+
+    print("networkx: ")
+    ntw_nx = ntw.get_network_nx()
+    features_nx_df = local_features_nx(ntw_nx, alpha_pr, alpha_ppr, fraud_dict_train=fraud_dict_train, ntw_name=ntw_name)
+
+    print("networkit: ")
+    ntw_nk = ntw.get_network_nk()
+    features_nk_df = features_nk(ntw_nk, ntw_name=ntw_name)
+
+    if use_intrinsic:
+        features_df = pd.concat([X, features_nx_df, features_nk_df], axis=1)
+    else:
+        features_df = pd.concat([features_nx_df, features_nk_df], axis=1)
+    features_df["fraud"] = [fraud_dict_test[x] for x in features_df.index]
+
+    device_decoder = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
+
+    # Extract train features
+    features_df_train = features_df[train_mask.numpy()]
+    x_train_features = features_df_train.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    x_train = torch.tensor(x_train_features, dtype=torch.float32).to(device_decoder)
+    y_train = torch.tensor(features_df_train["fraud"].values, dtype=torch.long).to(device_decoder)
+
+    # Extract test features
+    features_df_test = features_df[test_mask.numpy()]
+    x_test_features = features_df_test.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    x_test = torch.tensor(x_test_features, dtype=torch.float32).to(device_decoder)
+    y_test = torch.tensor(features_df_test["fraud"].values, dtype=torch.long).to(device_decoder)
+
+    # Apply SMOTE to training data
+    train_mask_temp = torch.ones(x_train.shape[0], dtype=torch.bool)
+    x_train_smote, y_train_smote, _ = smote_mask(
+        train_mask_temp, x_train, y_train,
+        k_neighbors=k_neighbors,
+        random_state=random_state
+    )
+
+    if not isinstance(x_train_smote, torch.Tensor):
+        x_train_smote = torch.from_numpy(x_train_smote).to(device=device_decoder, dtype=x_train.dtype)
+    if not isinstance(y_train_smote, torch.Tensor):
+        y_train_smote = torch.from_numpy(y_train_smote).to(device=device_decoder)
+
+    decoder = Decoder_deep_norm(x_train_smote.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
+    criterion = nn.CrossEntropyLoss()
+
+    for epoch in range(n_epochs_decoder):
+        decoder.train()
+        optimizer.zero_grad()
+        output = decoder(x_train_smote)
+        loss = criterion(output, y_train_smote)
+        loss.backward()
+        optimizer.step()
+
+    decoder.eval()
+    y_pred = decoder(x_test)
+    y_pred = y_pred.softmax(dim=1)
+    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
+
+    # Return predictions for multiple F1 calculations
+    return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
 
 
 def GNN_features_graphsmote(
@@ -829,7 +1203,8 @@ def GNN_features_graphsmote(
         test_mask: torch.Tensor = None,
         use_intrinsic: bool = True,
         k_neighbors: int = 5,
-        random_state: int = None
+        random_state: int = None,
+        percentile_q: int = 99
 ):
     """
     GNN features with GraphSMOTE over-sampling for minority class.
@@ -895,10 +1270,10 @@ def GNN_features_graphsmote(
 
     try:
         ap_score = average_precision_score(y[test_mask].cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
-        # Calculate F1 at 90th percentile
+        # Calculate F1 at specified percentile
         import numpy as np
         from sklearn.metrics import f1_score
-        cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], 90)
+        cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
         y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
         f1 = f1_score(y[test_mask].cpu().detach().numpy(), y_pred_hard)
     except:
