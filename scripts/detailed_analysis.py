@@ -111,14 +111,7 @@ if __name__ == "__main__":
             return
 
         print("\n" + "=" * 100)
-        if metric_name == 'AUC-PRC':
-            print(f" Detailed {metric_name} Summary (F1 percentile: 99% intrinsic/embedding, 90% GNN data pipeline)")
-        elif metric_name == 'F1_90':
-            print(f" Detailed F1 Summary (90th percentile threshold)")
-        elif metric_name == 'F1_99':
-            print(f" Detailed F1 Summary (99th percentile threshold)")
-        else:
-            print(f" Detailed {metric_name} Summary")
+        print(f" Detailed {metric_name} Summary (F1 percentile: 99% intrinsic/embedding, 90% GNN data pipeline)")
         print("=" * 100)
 
         ratio_stats = sub.groupby('ratio')['score'].agg(['count', 'mean', 'std', 'min', 'max']).round(6).sort_values('mean', ascending=False)
