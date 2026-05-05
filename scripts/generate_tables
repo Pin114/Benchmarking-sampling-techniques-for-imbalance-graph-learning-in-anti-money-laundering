@@ -1,0 +1,109 @@
+import os
+import sys
+import pandas as pd
+import numpy as np
+from datetime import datetime
+
+
+# Setup paths
+
+DIR = os.path.dirname(os.path.abspath(__file__))
+
+os.chdir(DIR + "/../")
+
+sys.path.append(DIR + "/../")
+
+def parse_results():    
+    res_dir = "res"
+    results = []
+
+    
+    for filename in os.listdir(res_dir):
+        if not filename.endswith('.txt'):
+            continue
+        
+# 1. 識別 Dataset
+        dataset = "IBM" if "_ibm_" in filename else "Elliptic" if "_elliptic_" in filename else None
+        if not dataset: continue
+
+        # 2. 識別 Metric (新增 AUC-PRC)
+        if "_f1_90_" in filename:
+            metric = "F1_90"
+        elif "_f1_99_" in filename:
+            metric = "F1_99"
+        else:
+            metric = "AUC-PRC"
+
+        # 3. 解析 Ratio & Sampling
+        clean_name = filename.replace(".txt", "")
+        ratio = "2:1" if "ratio_1to2" in clean_name else "1:1" if "ratio_1to1" in clean_name else "Original"
+        
+        if "graph_smote" in clean_name: sampling = "GraphSMOTE"
+        elif "smote" in clean_name: sampling = "SMOTE"
+        elif "rus" in clean_name: sampling = "RUS"
+        else: sampling = "None"
+
+        # 解析 Method
+        method = clean_name.split('_')[0].capitalize()
+
+        # 4. 讀取 Score
+        try:
+            with open(os.path.join(res_dir, filename), 'r') as f:
+                content = f.read().strip()
+                label = f"{metric}:"
+                if label in content:
+                    # 擷取冒號後的第一個數字字串
+                    score_str = content.split(label)[1].split()[0].strip()
+                    results.append({
+                        'dataset': dataset, 'method': method, 'ratio': ratio,
+                        'sampling': sampling, 'metric': metric, 'score': float(score_str)
+                    })
+        except: continue
+            
+    return pd.DataFrame(results)
+
+def generate_report_section(df, metric):
+    output = f"\n\n{'#'*20} METRIC: {metric} {'#'*20}\n"
+    
+    # 定義要比較的實驗設定
+    target_ratios = ["Original", "1:1", "2:1"] # 包含 Balance(1:1) 與 APATE(2:1)
+    
+    for r in target_ratios:
+        sub = df[(df['metric'] == metric) & (df['ratio'] == r)]
+        if sub.empty: continue
+
+        pivot = sub.pivot_table(values='score', index='method', columns=['dataset', 'sampling'], aggfunc='first')
+        
+        # 排序
+        sampling_order = ['None', 'RUS', 'SMOTE', 'GraphSMOTE']
+        dataset_order = ['Elliptic', 'IBM']
+        new_cols = [(d, s) for d in dataset_order for s in sampling_order if (d, s) in pivot.columns]
+        pivot = pivot[new_cols]
+
+        output += f"\n[ Ratio: {r} ]\n"
+        output += "-" * 100 + "\n"
+        output += pivot.fillna("-").to_string(float_format=lambda x: "{:,.4f}".format(x))
+        output += "\n"
+        
+    return output
+
+def main():
+    df = parse_results()
+    if df.empty: return
+
+    report_dir = os.path.join(DIR, "comparative_reports")
+    os.makedirs(report_dir, exist_ok=True)
+    
+    report_path = os.path.join(report_dir, "full_comparative_report.txt")
+    
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write(f"Full Experimental Results Table\nGenerated: {datetime.now()}\n")
+        
+        # 依序產出三種指標
+        for m in ["AUC-PRC", "F1_90", "F1_99"]:
+            f.write(generate_report_section(df, m))
+            
+    print(f"Report generated: {report_path}")
+
+if __name__ == "__main__":
+    main()
