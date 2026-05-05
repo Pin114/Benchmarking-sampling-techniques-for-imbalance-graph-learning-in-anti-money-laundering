@@ -2,6 +2,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+from pathlib import Path
 from datetime import datetime
 
 
@@ -12,6 +13,9 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(DIR + "/../")
 
 sys.path.append(DIR + "/../")
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+REPORT_BASE_DIR = ROOT_DIR / "analysis_reports" / "comparative_reports"
 
 def parse_results():    
     res_dir = "res"
@@ -103,7 +107,7 @@ def main():
         for m in ["AUC-PRC", "F1_90", "F1_99"]:
             f.write(generate_report_section(df, m))
             
-    print(f"Report generated: {report_path}")
+    print(f"\nSuccess! Report saved to: {report_path}")
 
 if __name__ == "__main__":
     main()
