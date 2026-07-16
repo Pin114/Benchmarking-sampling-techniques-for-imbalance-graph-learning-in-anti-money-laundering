@@ -2,10 +2,27 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, GATv2Conv, SAGEConv, GINConv, GINEConv
 from src.methods.utils.decoder import *
 from typing import List, Optional, Tuple, Union
-from torch_geometric.nn.aggr import Aggregation
+
+GCNConv = None
+GATv2Conv = None
+SAGEConv = None
+GINConv = None
+GINEConv = None
+Aggregation = None
+
+def _ensure_torch_geometric_layers():
+    global GCNConv, GATv2Conv, SAGEConv, GINConv, GINEConv, Aggregation
+    if None in (GCNConv, GATv2Conv, SAGEConv, GINConv, GINEConv, Aggregation):
+        try:
+            from torch_geometric.nn import GCNConv, GATv2Conv, SAGEConv, GINConv, GINEConv
+            from torch_geometric.nn.aggr import Aggregation
+        except Exception as e:
+            raise ImportError(
+                "torch_geometric is required for GNN layers but failed to import. "
+                f"Install torch_geometric and ensure its dependencies (pyg-lib, torch-sparse) are available. Original error: {e}"
+            ) from e
 
 # Look at having hidden_dim and only embedding_dim in final layer
 
@@ -20,6 +37,7 @@ class GCN(nn.Module):
             n_layers: int = 3, 
             dropout_rate: float = 0
             ):
+        _ensure_torch_geometric_layers()
         super().__init__()
         self.edge_index = edge_index
         self.num_features = num_features
@@ -41,16 +59,19 @@ class GCN(nn.Module):
 
         self.out = Decoder_linear(embedding_dim, output_dim)
 
-    def forward(self, x, edge_index):
-        h = self.gcn1(x, edge_index)
+    def forward(self, x, edge_index, edge_attr=None):
+        edge_weight = None
+        if edge_attr is not None:
+            edge_weight = edge_attr.view(-1).to(torch.float32)
+        h = self.gcn1(x, edge_index, edge_weight=edge_weight)
         h = F.relu(h)
         h = self.dropout(h)
         if self.n_layers > 1:
             for layer in self.gcn_hidden:
-                h = layer(h, edge_index)
+                h = layer(h, edge_index, edge_weight=edge_weight)
                 h = F.relu(h)
                 h = self.dropout(h)
-            h = self.gcn2(h, edge_index)
+            h = self.gcn2(h, edge_index, edge_weight=edge_weight)
         out = self.out(h)
 
         return out, h
@@ -67,6 +88,7 @@ class GraphSAGE(nn.Module): #Neighbourhood sampling only in training step (via D
             dropout_rate: float = 0, 
             sage_aggr: Optional[Union[str, List[str], Aggregation]]='mean'
             ):
+        _ensure_torch_geometric_layers()
         super().__init__()
         self.edge_index = edge_index
         self.num_features = num_features
@@ -90,7 +112,7 @@ class GraphSAGE(nn.Module): #Neighbourhood sampling only in training step (via D
 
         self.out = Decoder_linear(embedding_dim, output_dim)
         
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, edge_attr=None):
         h = self.sage1(x, edge_index)
         h = F.relu(h)
         h = self.dropout(h)
@@ -116,6 +138,7 @@ class GAT(nn.Module):
             heads: int = 1, 
             dropout_rate: float = 0
             ):
+        _ensure_torch_geometric_layers()
         super().__init__()
         self.num_features = num_features
         self.hidden_dim = hidden_dim
@@ -137,17 +160,25 @@ class GAT(nn.Module):
 
         self.out = Decoder_linear(embedding_dim, output_dim)
 
-    def forward(self, x, edge_index, edge_features=None):
-        h = self.gat1(x, edge_index, edge_attr=edge_features)
+    def forward(self, x, edge_index, edge_attr=None):
+        def _forward_gat_layer(layer, features):
+            if edge_attr is None:
+                return layer(features, edge_index)
+            edge_attr_supported = hasattr(layer, "lin_edge") and layer.lin_edge is not None
+            if edge_attr_supported:
+                return layer(features, edge_index, edge_attr=edge_attr.to(torch.float32))
+            return layer(features, edge_index)
+
+        h = _forward_gat_layer(self.gat1, x)
         h = F.relu(h)
         h = self.dropout(h)
         if self.n_layers > 1:
             for layer in self.gat_hidden:
-                h = layer(h, edge_index, edge_attr=edge_features)
+                h = _forward_gat_layer(layer, h)
                 h = F.relu(h)
                 h = self.dropout(h)
             
-            h = self.gat2(h, edge_index, edge_attr=edge_features)
+            h = _forward_gat_layer(self.gat2, h)
         out = self.out(h)
         
         return out, h
@@ -162,6 +193,7 @@ class GIN(nn.Module):
             n_layers: int, 
             dropout_rate: float = 0
             ):
+        _ensure_torch_geometric_layers()
         super().__init__()
         self.num_features = num_features
         self.hidden_dim = hidden_dim
@@ -211,7 +243,7 @@ class GIN(nn.Module):
 
         self.out = Decoder_linear(embedding_dim, output_dim)
     
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, edge_attr=None):
         h = self.gin1(x, edge_index)
 
         if self.n_layers > 1:
@@ -235,6 +267,7 @@ class GINE(nn.Module):
             n_layers: int, 
             dropout_rate: float = 0
             ):
+        _ensure_torch_geometric_layers()
         super().__init__()
         self.num_features = num_features
         self.edge_dim = edge_dim

@@ -1,5 +1,4 @@
 import torch
-from torch_geometric.data import Data
 import networkx as nx
 
 # --- Try import networkit, fallback if unavailable ---
@@ -114,6 +113,14 @@ class network_AML():
 
         # PyG edge_index [2, num_edges]
         edge_index = torch.tensor(np.array(self.edges.values).T, dtype=torch.long)
+
+        try:
+            from torch_geometric.data import Data
+        except Exception as e:
+            raise ImportError(
+                "Unable to import torch_geometric.data.Data. Ensure torch_geometric and pyg-lib are installed and compatible with the current Python environment. "
+                f"Original error: {e}"
+            ) from e
 
         data = Data(x=x, y=y, edge_index=edge_index)
 

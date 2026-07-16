@@ -2,6 +2,7 @@ import pandas as pd
 import torch
 import os
 import sys
+import time
 # Ensure the `src` directory is on sys.path so imports like `utils.Network`
 # work when running this script directly.
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -55,15 +56,31 @@ def load_elliptic():
 from datetime import timedelta
 import os
 
-def preprocess_ibm(num_obs):
-    date_format = '%Y/%m/%d %H:%M'
 
-    data_path = os.path.join(ROOT, 'data', 'data', 'IBM', 'HI-Small_Trans.csv')
-    data_df = pd.read_csv(data_path)
-    data_df['Timestamp'] = pd.to_datetime(data_df['Timestamp'], format=date_format)
+def _read_csv_with_retries(csv_path, retries=3, sleep_seconds=2, **kwargs):
+    """Retry CSV reads to tolerate transient filesystem/network hiccups."""
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            return pd.read_csv(csv_path, **kwargs)
+        except (TimeoutError, OSError, pd.errors.ParserError) as err:
+            last_error = err
+            if attempt == retries:
+                raise
+            wait_s = sleep_seconds * attempt
+            print(f"Warning: read_csv failed for {csv_path} (attempt {attempt}/{retries}): {err}. Retrying in {wait_s}s...")
+            time.sleep(wait_s)
+    raise last_error
+
+def preprocess_ibm(num_obs, csv_name='HI-Small_Trans.csv', edges_output_name='edges.csv'):
+    data_path = os.path.join(ROOT, 'data', 'data', 'IBM', csv_name)
+    data_df = _read_csv_with_retries(data_path)
+    # Different IBM configs use slightly different timestamp formats; parse robustly.
+    data_df['Timestamp'] = pd.to_datetime(data_df['Timestamp'], errors='coerce')
+    data_df = data_df.dropna(subset=['Timestamp'])
     data_df.sort_values('Timestamp', inplace=True)
     data_df = data_df[data_df['Account']!= data_df['Account.1']]  # Load raw transaction data, sort by time, and remove self-transactions (Account != Account.1)
-    start_index = int(len(data_df)-num_obs)
+    start_index = int(len(data_df)-min(len(data_df), num_obs))
     data_df = data_df.iloc[start_index:]
     data_df.reset_index(drop=True, inplace=True)
     data_df.reset_index(inplace=True)
@@ -85,10 +102,13 @@ def preprocess_ibm(num_obs):
     # Build edge list for IBM transaction graph (define relationships between transactions).
     # Use sliding window join to identify transactions with successor relationships,
     # converting independent transaction records into a directed graph
+    total_rows = len(data_df_accounts)
     for i in tqdm(range(pieces)):
-        start = i*num_obs//pieces
-        end = (i+1)*num_obs//pieces
+        start = i * total_rows // pieces
+        end = (i + 1) * total_rows // pieces
         data_df_right = data_df_accounts[start:end]  # Define right window (current transactions to find predecessors for)
+        if data_df_right.empty:
+            continue
         min_timestamp = data_df_right['Timestamp'].iloc[0]
         max_timestamp = data_df_right['Timestamp'].iloc[-1]
 
@@ -108,20 +128,31 @@ def preprocess_ibm(num_obs):
                 source.append(row['index_1'])  # Store transaction indices (txIds) meeting time and account flow conditions into source and target lists to form graph edges
                 target.append(row['index_2'])  # Add all discovered edge relationships to edges.csv file
 
-    edges_out = os.path.join(ROOT, 'data', 'data', 'IBM', 'edges.csv')
+    edges_out = os.path.join(ROOT, 'data', 'data', 'IBM', edges_output_name)
     pd.DataFrame({'txId1': source, 'txId2': target}).to_csv(edges_out, index=False)
 
-def load_ibm():
+def load_ibm_config(config_name='hi_small'):
     path = os.path.join(ROOT, 'data', 'data', 'IBM')
+    config_map = {
+        'hi_small': 'HI-Small_Trans.csv',
+        'hi_medium': 'HI-Medium_Trans.csv',
+        'hi_large': 'HI-Large_Trans.csv',
+        'li_small': 'LI-Small_Trans.csv',
+        'li_medium': 'LI-Medium_Trans.csv',
+        'li_large': 'LI-Large_Trans.csv',
+    }
+    if config_name not in config_map:
+        raise ValueError(f'Unknown IBM config: {config_name}')
 
-    df_features = pd.read_csv(os.path.join(path, 'HI-Small_Trans.csv')) 
+    csv_name = config_map[config_name]
+    df_features = _read_csv_with_retries(os.path.join(path, csv_name))
     df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], dayfirst=True, errors='coerce')  # IBM timestamp format
 #     df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], format='%Y/%m/%d %H:%M')  # Elliptic timestamp format
     df_features.sort_values('Timestamp', inplace=True)
     df_features = df_features[df_features['Account']!= df_features['Account.1']]
 
     num_obs = 500000
-    start_index = int(len(df_features)-500000)
+    start_index = int(len(df_features)-min(len(df_features), 500000))
     df_features = df_features.iloc[start_index:]
 
     df_features.reset_index(drop=True, inplace=True)
@@ -132,9 +163,10 @@ def load_ibm():
 
     print('Number of observations: ', len(df_features))
 
-    if not os.path.exists(os.path.join(path, 'edges.csv')):
-        preprocess_ibm(num_obs=num_obs)
-    df_edges = pd.read_csv(os.path.join(path, 'edges.csv'))
+    edge_path = os.path.join(path, f'edges_{config_name}.csv')
+    if not os.path.exists(edge_path):
+        preprocess_ibm(num_obs=num_obs, csv_name=csv_name, edges_output_name=f'edges_{config_name}.csv')
+    df_edges = _read_csv_with_retries(edge_path)
 
     list_day = []
     list_hour = []
@@ -162,6 +194,10 @@ def load_ibm():
     test_mask = mask.clone()
     test_mask[train_size+val_size:] = True
 
-    ntw = network_AML(df_features, df_edges, train_mask=train_mask, val_mask=val_mask, test_mask=test_mask, name='ibm')
+    ntw = network_AML(df_features, df_edges, train_mask=train_mask, val_mask=val_mask, test_mask=test_mask, name=config_name)
 
     return(ntw)
+
+
+def load_ibm():
+    return load_ibm_config('hi_small')

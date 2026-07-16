@@ -5,7 +5,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 
-
 from src.methods.utils.functionsNetworkX import *
 
 from src.methods.utils.functionsNetworKit import *
@@ -20,7 +19,7 @@ from src.utils.Network import *
 
 from src.methods.utils.decoder import *
 
-from src.methods.evaluation import smote_mask, graph_smote_mask
+from src.methods.evaluation import smote_mask, graph_smote_mask, reweighted_graph_smote_mask
 
 
 
@@ -504,10 +503,32 @@ def node2vec_features(
 ):
 
     if use_torch:
+        active_nodes = (train_mask.bool() | test_mask.bool())
+        active_idx = None
 
+        # The pipeline order is now: sampling adjustment on the graph structure first,
+        # then Node2Vec random walks on the adjusted graph, then downstream classification.
+        if active_nodes.any():
+            active_idx = torch.where(active_nodes)[0]
+            node_map = {int(old_idx): new_idx for new_idx, old_idx in enumerate(active_idx.tolist())}
+            edge_pairs = []
+            for src, dst in ntw_torch.edge_index.t().tolist():
+                if src in node_map and dst in node_map:
+                    edge_pairs.append((node_map[src], node_map[dst]))
+            if edge_pairs:
+                filtered_edge_index = torch.tensor(edge_pairs, dtype=torch.long).t().contiguous()
+            else:
+                filtered_edge_index = torch.empty((2, 0), dtype=torch.long)
+            filtered_graph = ntw_torch.clone()
+            filtered_graph.edge_index = filtered_edge_index
+            filtered_graph.x = ntw_torch.x[active_idx]
+            filtered_graph.num_nodes = int(active_idx.shape[0])
+            graph_for_n2v = filtered_graph
+        else:
+            graph_for_n2v = ntw_torch
         model_n2v = node2vec_representation_torch(
 
-            ntw_torch,
+            graph_for_n2v,
 
             train_mask = train_mask,
 
@@ -542,6 +563,11 @@ def node2vec_features(
         # For ease of use, move both tensors to the same device (cpu will always work)
 
         x = x.detach().to('cpu')
+        x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
+        if active_nodes.any() and active_idx is not None and x.shape[0] != ntw_torch.num_nodes:
+            x_full = torch.zeros((ntw_torch.num_nodes, x.shape[1]), dtype=x.dtype)
+            x_full[active_idx] = x
+            x = x_full
 
 
 
@@ -574,10 +600,12 @@ def node2vec_features(
         x_df = pd.DataFrame([model_n2v(n) for n in ntw_nx.nodes()], index=ntw_nx.nodes())
 
         x = torch.tensor(x_df.values).to('cpu')
+        x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
 
     
 
     x_intrinsic = ntw_torch.x.detach().to('cpu')
+    x_intrinsic = torch.nan_to_num(x_intrinsic, nan=0.0, posinf=1e5, neginf=-1e5)
 
     if use_intrinsic:
 
@@ -670,9 +698,13 @@ def GNN_features(
 
         train_loader: DataLoader =None,
 
+        val_loader: DataLoader =None,
+
         test_loader: DataLoader =None,
 
         train_mask: torch.Tensor = None,
+
+        val_mask: torch.Tensor = None,
 
         test_mask: torch.Tensor = None,
 
@@ -681,213 +713,140 @@ def GNN_features(
         percentile_q: int = 99
 
 ):
-
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
     model = model.to(device)
 
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
 
+    def _mask_to_device(mask):
+        if mask is None:
+            return None
+        return mask.bool().to(device)
 
-    #Here training should not be a whole other function, but should be part of this function
-
-
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)  # Define optimizer.
-
-    criterion = nn.CrossEntropyLoss()  # Define loss function.
-
-
-
-    def train_GNN_feat():
-
-        model.train()
-
-        if train_loader is None:
-
-            optimizer.zero_grad()
-
-            y_hat, h = model(ntw_torch.x, ntw_torch.edge_index.to(device))
-
-            y = ntw_torch.y.long()
-
-            loss = criterion(y_hat[train_mask.bool()], y[train_mask.bool()])
-
-            loss.backward()
-
-            optimizer.step()
-
-        else:
-
-            loader = train_loader #User-specified loader. Intetended mainly for GraphSAGE.
-
-            for batch in loader:
-
-                optimizer.zero_grad()
-
-                out, h = model(batch.x, batch.edge_index.to(device))
-
-                y_hat = out[:batch.batch_size]
-
-                y = batch.y[:batch.batch_size]
-
-                loss = criterion(y_hat, y)
-
-                loss.backward()
-
-                optimizer.step()
-
-
-
-        return(loss)
-
-    
-
-    def train_GNN_ones():
-
-        model.train()
-
-        if train_loader is None:
-
-            optimizer.zero_grad()
-
-            # Vector of ones for training
-
-            ones = torch.ones((ntw_torch.x.shape[0], 1),dtype=torch.float32).to(device)
-
-            y_hat, h = model(ones, ntw_torch.edge_index.to(device))
-
-            y = ntw_torch.y
-
-            loss = criterion(y_hat[train_mask], y[train_mask])
-
-            loss.backward()
-
-            optimizer.step()
-
-        else:
-
-            loader = train_loader #User-specified loader. Intetended mainly for GraphSAGE.
-
-            for batch in loader:
-
-                # Vector of ones for training
-
-                ones = torch.ones((ntw_torch.x.shape[0], 1),dtype=torch.float32).to(device)
-
-                optimizer.zero_grad()
-
-                out, h = model(ones, batch.edge_index.to(device))
-
-                y_hat = out[:batch.batch_size]
-
-                y = batch.y[:batch.batch_size]
-
-                loss = criterion(y_hat, y)
-
-                loss.backward()
-
-                optimizer.step()
-
-
-
-        return(loss)
-
-
-
-    if use_intrinsic:
-
-        for epoch in range(n_epochs):
-
-            loss_train = train_GNN_feat()
-
-            #print('epoch: ', epoch, 'train loss: ', loss_train.item())
-
-    else:
-
-        for epoch in range(n_epochs):
-
-            loss_train = train_GNN_ones()
-
-            #print('epoch: ', epoch, 'train loss: ', loss_train.item())
-
-    
-
-    model.eval()
-
-    if test_loader is None:
-
+    def _forward(x, edge_index):
         if use_intrinsic:
+            return model(x, edge_index)
+        ones = torch.ones((x.shape[0], 1), dtype=torch.float32, device=device)
+        return model(ones, edge_index)
 
-            out, h = model(ntw_torch.x, ntw_torch.edge_index.to(device))
+    def _build_weighted_criterion(y_subset):
+        num_pos = int((y_subset == 1).sum().item())
+        num_neg = int((y_subset == 0).sum().item())
+        pos_weight = float(num_neg) / max(num_pos, 1)
+        weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device)
+        return nn.CrossEntropyLoss(weight=weight_tensor)
 
-        else:
+    def train_epoch():
+        model.train()
 
-            # Vector of ones for testing
+        if train_loader is None:
+            optimizer.zero_grad()
+            out, _ = _forward(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
+            y = ntw_torch.y.long().to(device)
 
-            ones = torch.ones((ntw_torch.x.shape[0], 1),dtype=torch.float32).to(device)
-
-            out, h = model(ones, ntw_torch.edge_index.to(device))
-
-
-
-        if test_mask is None: # If no test_mask is provided, use all data
-
-            y_hat = out
-
-            y = ntw_torch.y.long()
-
-        else:
-
-            y_hat = out[test_mask.bool()].squeeze()
-
-            y = ntw_torch.y.long()[test_mask.bool()].squeeze()
-
-    else:
-
-        for batch in test_loader:
-
-            batch = batch.to(device, 'edge_index')
-
-            if use_intrinsic:
-
-                out, h = model(batch.x, batch.edge_index)
-
+            if train_mask is not None:
+                train_dev = _mask_to_device(train_mask)
+                y_train = y[train_dev]
+                criterion = _build_weighted_criterion(y_train)
+                loss = criterion(out[train_dev], y_train)
             else:
+                criterion = _build_weighted_criterion(y)
+                loss = criterion(out, y)
 
-                # Vector of ones for testing
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            return loss.item()
 
-                ones = torch.ones((ntw_torch.x.shape[0], 1),dtype=torch.float32).to(device)
+        epoch_loss = 0.0
+        batch_count = 0
+        for batch in train_loader:
+            optimizer.zero_grad()
+            if use_intrinsic:
+                out, _ = model(batch.x.to(device), batch.edge_index.to(device))
+            else:
+                ones = torch.ones((batch.x.shape[0], 1), dtype=torch.float32, device=device)
+                out, _ = model(ones, batch.edge_index.to(device))
+            y = batch.y.to(device)
+            y_active = y[:batch.batch_size]
+            criterion = _build_weighted_criterion(y_active)
+            loss = criterion(out[:batch.batch_size], y_active)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            epoch_loss += loss.item()
+            batch_count += 1
+        return epoch_loss / max(batch_count, 1)
 
-                out, h = model(ones, batch.edge_index)
+    def evaluate_split(mask, loader=None):
+        model.eval()
+        with torch.no_grad():
+            if loader is None:
+                if use_intrinsic:
+                    out, _ = model(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
+                else:
+                    ones = torch.ones((ntw_torch.x.shape[0], 1), dtype=torch.float32, device=device)
+                    out, _ = model(ones, ntw_torch.edge_index.to(device))
+                y = ntw_torch.y.long().to(device)
+                if mask is not None:
+                    mask_dev = _mask_to_device(mask)
+                    out = out[mask_dev]
+                    y = y[mask_dev]
+            else:
+                out = None
+                y = None
+                for batch in loader:
+                    batch = batch.to(device, 'edge_index')
+                    if use_intrinsic:
+                        batch_out, _ = model(batch.x, batch.edge_index)
+                    else:
+                        ones = torch.ones((batch.x.shape[0], 1), dtype=torch.float32, device=device)
+                        batch_out, _ = model(ones, batch.edge_index)
+                    batch_y = batch.y.to(device)
+                    if out is None:
+                        out = batch_out[:batch.batch_size]
+                        y = batch_y[:batch.batch_size]
+                    else:
+                        out = torch.cat([out, batch_out[:batch.batch_size]], dim=0)
+                        y = torch.cat([y, batch_y[:batch.batch_size]], dim=0)
 
-            y_hat = out[:batch.batch_size]
+            if out is None or out.shape[0] == 0:
+                return None
 
-            y = batch.y[:batch.batch_size]
-            
-    y_hat = y_hat.softmax(dim=1)
+            criterion = _build_weighted_criterion(y)
+            loss = criterion(out, y).item()
+            y_hat = out.softmax(dim=1)
+            y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
+            try:
+                ap_score = average_precision_score(y.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
+                import numpy as np
+                from sklearn.metrics import f1_score
+                cutoff = np.percentile(y_hat.cpu().numpy()[:, 1], percentile_q)
+                y_pred_hard = (y_hat.cpu().numpy()[:, 1] >= cutoff).astype(int)
+                f1 = f1_score(y.cpu().numpy(), y_pred_hard)
+            except Exception:
+                pred = out.argmax(dim=1)
+                correct = pred == y
+                ap_score = int(correct.sum()) / max(int(correct.shape[0]), 1)
+                f1 = ap_score
 
-    try:
+            return {'loss': loss, 'ap': ap_score, 'f1': f1}
 
-        ap_score = average_precision_score(y.cpu().detach().numpy(), y_hat.cpu().detach().numpy()[:,1])
+    for epoch in range(n_epochs):
+        train_loss = train_epoch()
+        if val_mask is not None:
+            val_result = evaluate_split(val_mask)
+            if val_result is not None:
+                print(f"Epoch {epoch+1}/{n_epochs} train_loss={train_loss:.6f} val_loss={val_result['loss']:.6f} val_ap={val_result['ap']:.6f}")
+            else:
+                print(f"Epoch {epoch+1}/{n_epochs} train_loss={train_loss:.6f} val_result=None")
+        else:
+            print(f"Epoch {epoch+1}/{n_epochs} train_loss={train_loss:.6f}")
 
-        # Calculate F1 at specified percentile
-        import numpy as np
-        from sklearn.metrics import f1_score
-        cutoff = np.percentile(y_hat.cpu().detach().numpy()[:,1], percentile_q)
-        y_pred_hard = (y_hat.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
-        f1 = f1_score(y.cpu().detach().numpy(), y_pred_hard)
-
-    except: # Just test accuarcy (more than one class)
-
-        pred = out.argmax(dim=1)
-
-        test_correct = pred[ntw_torch.test_mask] == ntw_torch.y[ntw_torch.test_mask]  # Check against ground-truth labels.
-
-        ap_score = int(test_correct.sum()) / int(ntw_torch.test_mask.sum())
-
-        f1 = ap_score  # Approximation
-    
-    return ap_score, f1
+    test_result = evaluate_split(test_mask)
+    if test_result is None:
+        raise RuntimeError('Test evaluation returned no data.')
+    return test_result['ap'], test_result['f1']
 
 
 def intrinsic_features_smote(
@@ -1198,92 +1157,268 @@ def GNN_features_graphsmote(
         lr: float,
         n_epochs: int,
         train_loader: DataLoader = None,
+        val_loader: DataLoader = None,
         test_loader: DataLoader = None,
         train_mask: torch.Tensor = None,
+        val_mask: torch.Tensor = None,
         test_mask: torch.Tensor = None,
         use_intrinsic: bool = True,
         k_neighbors: int = 5,
         random_state: int = None,
-        percentile_q: int = 99
+        percentile_q: int = 99,
+        use_reweighted: bool = False
 ):
     """
     GNN features with GraphSMOTE over-sampling for minority class.
     """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
+    def _build_weighted_criterion(y_subset):
+        num_pos = int((y_subset == 1).sum().item())
+        num_neg = int((y_subset == 0).sum().item())
+        pos_weight = float(num_neg) / max(num_pos, 1)
+        weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device)
+        return nn.CrossEntropyLoss(weight=weight_tensor)
 
-    # Apply GraphSMOTE to expand training data
-    x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
-        train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index,
-        k_neighbors=k_neighbors,
-        random_state=random_state
-    )
-    
-    # Ensure labels are binary (0 and 1 only) - filter out any invalid labels like 2 (unknown)
+    def _mask_to_device(mask):
+        if mask is None:
+            return None
+        return mask.bool().to(device)
+
+    def _forward(x, edge_index, edge_attr=None):
+        if use_intrinsic:
+            return model(x, edge_index, edge_attr=edge_attr)
+        ones = torch.ones((x.shape[0], 1), dtype=torch.float32, device=device)
+        return model(ones, edge_index, edge_attr=edge_attr)
+
+    if use_reweighted:
+        x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index,
+            k_neighbors=k_neighbors,
+            random_state=random_state
+        )
+    else:
+        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index,
+            k_neighbors=k_neighbors,
+            random_state=random_state
+        )
+        edge_attr_smote = None
+
     if isinstance(y_smote, torch.Tensor):
         valid_labels = torch.isin(y_smote, torch.tensor([0, 1], device=y_smote.device))
         valid_mask = train_mask_smote & valid_labels
     else:
+        import numpy as np
         valid_labels = np.isin(y_smote, [0, 1])
-        valid_mask = train_mask_smote & torch.from_numpy(valid_labels).bool()
-    
+        valid_mask = torch.from_numpy(valid_labels).bool() & train_mask_smote
+
     if not valid_mask.any():
         print("Warning: No valid training samples after filtering. Falling back to no sampling.")
-        # Fall back to regular GNN without SMOTE
-        return GNN_features(ntw_torch, model, lr, n_epochs, train_loader, test_loader, train_mask, test_mask, use_intrinsic)
+        return GNN_features(
+            ntw_torch, model, lr, n_epochs,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            test_loader=test_loader,
+            train_mask=train_mask,
+            val_mask=val_mask,
+            test_mask=test_mask,
+            use_intrinsic=use_intrinsic,
+            percentile_q=percentile_q
+        )
 
-    # Create a copy of the graph data with SMOTE-augmented data
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
     ntw_torch_smote.y = y_smote.long().to(device)
     ntw_torch_smote.edge_index = edge_index_smote.long().to(device)
+    if edge_attr_smote is not None:
+        ntw_torch_smote.edge_attr = edge_attr_smote.to(device=device, dtype=torch.float32)
     train_mask_smote = valid_mask.bool().to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
-    criterion = nn.CrossEntropyLoss()
 
-    def train_GNN_graphsmote():
+    def train_epoch():
         model.train()
         optimizer.zero_grad()
-        y_hat, h = model(ntw_torch_smote.x, ntw_torch_smote.edge_index)
+        edge_attr_for_epoch = ntw_torch_smote.edge_attr if hasattr(ntw_torch_smote, 'edge_attr') and ntw_torch_smote.edge_attr is not None else None
+        out, h = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, edge_attr=edge_attr_for_epoch)
         y = ntw_torch_smote.y
-        # Double-check: only use samples with valid labels (0 or 1)
         valid_mask_batch = torch.isin(y, torch.tensor([0, 1], device=y.device))
-        if valid_mask_batch.any():
-            y_hat_filtered = y_hat[train_mask_smote & valid_mask_batch]
-            y_filtered = y[train_mask_smote & valid_mask_batch]
-            if len(y_filtered) > 0:
-                loss = criterion(y_hat_filtered, y_filtered)
-                loss.backward()
-                optimizer.step()
+        active_mask = train_mask_smote & valid_mask_batch
+        if active_mask.any():
+            y_hat_filtered = out[active_mask]
+            y_filtered = y[active_mask]
+            criterion = _build_weighted_criterion(y_filtered)
+            loss = criterion(y_hat_filtered, y_filtered)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            return loss.item()
+        print("Warning: No valid training samples for GraphSMOTE epoch; skipping update.")
+        return 0.0
+
+    def evaluate_split(mask):
+        model.eval()
+        with torch.no_grad():
+            if use_intrinsic:
+                out, h = model(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
+            else:
+                ones = torch.ones((ntw_torch.x.shape[0], 1), dtype=torch.float32, device=device)
+                out, h = model(ones, ntw_torch.edge_index.to(device))
+            y = ntw_torch.y.long().to(device)
+            if mask is not None:
+                mask_dev = _mask_to_device(mask)
+                out = out[mask_dev]
+                y = y[mask_dev]
+            if out.shape[0] == 0:
+                return None
+            criterion = _build_weighted_criterion(y)
+            loss = criterion(out, y).item()
+            y_hat = out.softmax(dim=1)
+            y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
+            try:
+                ap_score = average_precision_score(y.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
+                import numpy as np
+                from sklearn.metrics import f1_score
+                cutoff = np.percentile(y_hat.cpu().numpy()[:, 1], percentile_q)
+                y_pred_hard = (y_hat.cpu().numpy()[:, 1] >= cutoff).astype(int)
+                f1 = f1_score(y.cpu().numpy(), y_pred_hard)
+            except Exception:
+                pred = out.argmax(dim=1)
+                correct = pred == y
+                ap_score = int(correct.sum()) / max(int(correct.shape[0]), 1)
+                f1 = ap_score
+            return {'loss': loss, 'ap': ap_score, 'f1': f1}
+
+    for epoch in range(n_epochs):
+        train_loss = train_epoch()
+        if val_mask is not None:
+            val_result = evaluate_split(val_mask)
+            if val_result is not None:
+                print(f"Epoch {epoch+1}/{n_epochs} train_loss={train_loss:.6f} val_loss={val_result['loss']:.6f} val_ap={val_result['ap']:.6f}")
+            else:
+                print(f"Epoch {epoch+1}/{n_epochs} train_loss={train_loss:.6f} val_result=None")
         else:
-            print("Warning: No valid batches for training. Skipping batch.")
+            print(f"Epoch {epoch+1}/{n_epochs} train_loss={train_loss:.6f}")
 
-    for _ in range(n_epochs):
-        train_GNN_graphsmote()
-
-    model.eval()
-    # Evaluate on original test set (without SMOTE augmentation)
-    y_hat, h = model(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
-    y = ntw_torch.y.to(device)
-    y_pred = y_hat[test_mask].softmax(dim=1)
-
-    try:
-        ap_score = average_precision_score(y[test_mask].cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
-        # Calculate F1 at specified percentile
-        import numpy as np
-        from sklearn.metrics import f1_score
-        cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
-        y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
-        f1 = f1_score(y[test_mask].cpu().detach().numpy(), y_pred_hard)
-    except:
-        pred = y_hat[test_mask].argmax(dim=1)
-        test_correct = pred == y[test_mask]
-        ap_score = int(test_correct.sum()) / int(test_mask.sum())
-        f1 = ap_score  # Approximation
-
-    return ap_score, f1 
+    test_result = evaluate_split(test_mask)
+    if test_result is None:
+        raise RuntimeError('Test evaluation returned no data.')
+    return test_result['ap'], test_result['f1']
 
 
+def GNN_features_reweighted_graphsmote(
+        ntw_torch,
+        model: nn.Module,
+        lr: float,
+        n_epochs: int,
+        train_mask: torch.Tensor = None,
+        val_mask: torch.Tensor = None,
+        test_mask: torch.Tensor = None,
+        use_intrinsic: bool = True,
+        k_neighbors: int = 5,
+        random_state: int = None,
+        percentile_q: int = 99
+):
+    """Train a GNN on reweighted GraphSMOTE-expanded training data and evaluate on original val/test splits."""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = model.to(device)
 
-    return(ap_score)
+    def _mask_to_device(mask):
+        if mask is None:
+            return None
+        return mask.bool().to(device)
+
+    def _forward(x, edge_index, edge_weight=None):
+        if use_intrinsic:
+            return model(x, edge_index, edge_weight=edge_weight)
+        ones = torch.ones((x.shape[0], 1), dtype=torch.float32, device=device)
+        return model(ones, edge_index)
+
+    x_smote, y_smote, train_mask_smote, edge_index_smote, edge_weight_smote = reweighted_graph_smote_mask(
+        train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index,
+        k_neighbors=k_neighbors,
+        random_state=random_state
+    )
+
+    ntw_torch_smote = ntw_torch.clone()
+    ntw_torch_smote.x = x_smote.to(device)
+    ntw_torch_smote.y = y_smote.long().to(device)
+    ntw_torch_smote.edge_index = edge_index_smote.long().to(device)
+    ntw_torch_smote.edge_attr = edge_weight_smote.view(-1).to(device=device, dtype=torch.float32)
+    train_mask_smote = train_mask_smote.bool().to(device)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
+
+    def _build_weighted_criterion(y_subset):
+        num_pos = int((y_subset == 1).sum().item())
+        num_neg = int((y_subset == 0).sum().item())
+        pos_weight = float(num_neg) / max(num_pos, 1)
+        weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device)
+        return nn.CrossEntropyLoss(weight=weight_tensor)
+
+    def train_epoch():
+        model.train()
+        optimizer.zero_grad()
+        out, h = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, ntw_torch_smote.edge_attr)
+        y = ntw_torch_smote.y
+        active_mask = train_mask_smote & (y != 2)
+        if active_mask.any():
+            y_hat_filtered = out[active_mask]
+            y_filtered = y[active_mask]
+            criterion = _build_weighted_criterion(y_filtered)
+            loss = criterion(y_hat_filtered, y_filtered)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            return loss.item()
+        return 0.0
+
+    def evaluate_split(mask):
+        model.eval()
+        with torch.no_grad():
+            if use_intrinsic:
+                out, h = model(ntw_torch.x.to(device), ntw_torch.edge_index.to(device), edge_weight=None)
+            else:
+                ones = torch.ones((ntw_torch.x.shape[0], 1), dtype=torch.float32, device=device)
+                out, h = model(ones, ntw_torch.edge_index.to(device))
+            y = ntw_torch.y.long().to(device)
+            if mask is not None:
+                mask_dev = _mask_to_device(mask)
+                out = out[mask_dev]
+                y = y[mask_dev]
+            if out.shape[0] == 0:
+                return None
+            criterion = _build_weighted_criterion(y)
+            loss = criterion(out, y).item()
+            y_hat = out.softmax(dim=1)
+            y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
+            try:
+                ap_score = average_precision_score(y.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
+                import numpy as np
+                from sklearn.metrics import f1_score
+                cutoff = np.percentile(y_hat.cpu().numpy()[:, 1], percentile_q)
+                y_pred_hard = (y_hat.cpu().numpy()[:, 1] >= cutoff).astype(int)
+                f1 = f1_score(y.cpu().numpy(), y_pred_hard)
+            except Exception:
+                pred = out.argmax(dim=1)
+                correct = pred == y
+                ap_score = int(correct.sum()) / max(int(correct.shape[0]), 1)
+                f1 = ap_score
+            return {'loss': loss, 'ap': ap_score, 'f1': f1}
+
+    for epoch in range(n_epochs):
+        train_loss = train_epoch()
+        if val_mask is not None:
+            val_result = evaluate_split(val_mask)
+            if val_result is not None:
+                print(f"Epoch {epoch+1}/{n_epochs} train_loss={train_loss:.6f} val_loss={val_result['loss']:.6f} val_ap={val_result['ap']:.6f}")
+            else:
+                print(f"Epoch {epoch+1}/{n_epochs} train_loss={train_loss:.6f} val_result=None")
+        else:
+            print(f"Epoch {epoch+1}/{n_epochs} train_loss={train_loss:.6f}")
+
+    test_result = evaluate_split(test_mask)
+    if test_result is None:
+        raise RuntimeError('Test evaluation returned no data.')
+    return test_result['ap'], test_result['f1']

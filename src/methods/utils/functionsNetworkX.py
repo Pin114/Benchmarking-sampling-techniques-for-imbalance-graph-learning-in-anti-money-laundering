@@ -1,7 +1,20 @@
 import networkx as nx
 import pandas as pd
 from multiprocessing import Pool, cpu_count
-from node2vec import Node2Vec
+
+_Node2Vec = None
+
+def get_Node2Vec():
+    global _Node2Vec
+    if _Node2Vec is None:
+        try:
+            from node2vec import Node2Vec as _Node2Vec
+        except Exception as e:
+            raise ImportError(
+                "The node2vec package is required for node2vec embeddings but failed to import. "
+                f"Install node2vec and ensure its dependencies are compatible. Original error: {e}"
+            ) from e
+    return _Node2Vec
 
 def calculate_node_features(arg):
     node, G_nx, fraud_dict_train, use_fraud_features = arg
@@ -140,6 +153,7 @@ def node2vec_embedding(
         window_size, 
         negative
                     ):
+    Node2Vec = get_Node2Vec()
     node2vec = Node2Vec(graph, dimensions=dimensions, p=p, q=q, walk_length=walk_length, num_walks=num_walks, workers=workers)
     # Embed nodes
     model = node2vec.fit(window=window_size, negative=negative, min_count=1)  # Any keywords acceptable by gensim.Word2Vec can be passed, `dimensions` and `workers` are automatically passed (from the Node2Vec constructor)

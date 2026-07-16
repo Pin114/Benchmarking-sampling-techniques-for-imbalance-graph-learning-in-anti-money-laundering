@@ -1,26 +1,42 @@
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 import torch
 from torch import Tensor
 import torch.nn as nn
-from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader, NeighborLoader
 from multiprocessing import cpu_count
 import sys
 import numpy as np
 
+if TYPE_CHECKING:
+    from torch_geometric.data import Data
+    from torch_geometric.loader import DataLoader, NeighborLoader
+else:
+    Data = object
+    DataLoader = object
+    NeighborLoader = object
+
 # --- Node2Vec import handling ---
 Node2VecPyG = None
 Node2VecPure = None
-try:
-    from torch_geometric.nn import Node2Vec
-    Node2VecPyG = Node2Vec
-except Exception:
-    Node2VecPyG = None
 
-try:
-    from node2vec import Node2Vec as Node2VecPure
-except Exception:
-    Node2VecPure = None
+def get_Node2VecPyG():
+    global Node2VecPyG
+    if Node2VecPyG is None:
+        try:
+            from torch_geometric.nn import Node2Vec
+            Node2VecPyG = Node2Vec
+        except Exception:
+            Node2VecPyG = None
+    return Node2VecPyG
+
+
+def get_Node2VecPure():
+    global Node2VecPure
+    if Node2VecPure is None:
+        try:
+            from node2vec import Node2Vec as Node2VecPure
+        except Exception:
+            Node2VecPure = None
+    return Node2VecPure
 
 
 def node2vec_representation_torch(
@@ -45,9 +61,9 @@ def node2vec_representation_torch(
     # -----------------------------
     # Use PyG Node2Vec if available
     # -----------------------------
-    if Node2VecPyG is not None:
+    if get_Node2VecPyG() is not None:
         try:
-            model = Node2VecPyG(
+            model = get_Node2VecPyG()( 
                 G_torch.edge_index,
                 embedding_dim=embedding_dim,
                 walk_length=walk_length,
@@ -87,7 +103,7 @@ def node2vec_representation_torch(
     # -----------------------------------------
     # Fallback: pure-Python Node2Vec + networkx
     # -----------------------------------------
-    if Node2VecPure is None:
+    if get_Node2VecPure() is None:
         raise ImportError("Neither PyG Node2Vec nor node2vec (pure Python) is available")
 
     import networkx as nx

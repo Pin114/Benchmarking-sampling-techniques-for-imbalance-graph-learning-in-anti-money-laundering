@@ -16,3 +16,5 @@ torch-spline-conv==1.2.2
 torch==2.5.0
 tqdm==4.66.5
 wheel==0.44.0
+gensim==4.4.0
+node2vec==0.5.0
