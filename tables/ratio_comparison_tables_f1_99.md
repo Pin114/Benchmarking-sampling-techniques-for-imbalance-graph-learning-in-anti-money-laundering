@@ -1,4 +1,4 @@
-# Resampling Ratio Impact Analysis Matrix (F1_90)
+# Resampling Ratio Impact Analysis Matrix (F1_99)
 
 > 橫向對比不同的不平衡重採樣技術與比例對模型最終泛化表現的實質影響：
 

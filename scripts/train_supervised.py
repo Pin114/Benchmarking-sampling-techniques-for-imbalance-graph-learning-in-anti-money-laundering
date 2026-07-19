@@ -95,7 +95,6 @@ if __name__ == "__main__":
     # Validation is only used for monitoring overfitting, while final reported metrics
     # are always computed on the held-out test split.
 
-    # ========== Techniques ==========
     to_train = [
         "intrinsic",
         "positional",

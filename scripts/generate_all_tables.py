@@ -164,7 +164,7 @@ def main():
         # 遍歷5個資料集
         for d_key in sorted(DATASET_MAP.keys()):
             d_name = DATASET_MAP[d_key]
-            output_lines.append(f"## 📁 Dataset: {d_name}\n")
+            output_lines.append(f"##  Dataset: {d_name}\n")
             
             # 遍歷所有的採樣技術，為每個技術產生一個對比表
             for s_key in ['NONE', 'RUS', 'SMOTE', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE']:
@@ -181,7 +181,7 @@ def main():
                 if not has_any_data:
                     continue
                     
-                output_lines.append(f"### ⚙️ Sampling Technique: {s_name}\n")
+                output_lines.append(f"###  Sampling Technique: {s_name}\n")
                 
                 # 輸出表頭
                 headers = ['Method / Baseline', 'Imbalance original', 'Imbalance ratio_1to10', 'Imbalance ratio_1to2', 'Imbalance ratio_1to1']
@@ -206,7 +206,7 @@ def main():
             output_lines.append("\n================================================================================\n")
             
         # 寫入對應指標的獨立 Markdown 表格中
-        output_file = res_dir / f"ratio_comparison_tables_{m_type.lower().replace('-', '_')}.md"
+        output_file = Path('tables') / f"ratio_comparison_tables_{m_type.lower().replace('-', '_')}.md"
         output_file.write_text('\n'.join(output_lines), encoding='utf-8')
         print(f"[Success] Unified tables for {m_type} saved to: {output_file}")
 
