@@ -30,11 +30,14 @@ SAMPLING_TECHNIQUES = {
 RATIOS = ['original', 'ratio_1to10', 'ratio_1to2', 'ratio_1to1']
 
 def infer_metadata(path: Path):
-    """
-    從檔案名稱推導模型、資料集、比例、採樣技術與指標類型
-    """
     name = path.name
     stem = name[:-12] if name.endswith('_summary.txt') else (name[:-4] if name.endswith('.txt') else name)
+    
+    # 【核心清洗補丁】：如果檔名尾端因為舊腳本 Bug 重複出現了資料集後綴（如 xxx_hi_medium_hi_medium），直接把它切乾淨
+    for d_tag in ['hi_small', 'hi_medium', 'li_small', 'li_medium', 'elliptic']:
+        if stem.endswith(f"_{d_tag}"):
+            stem = stem[:-len(f"_{d_tag}")]
+            
     stem_upper = stem.upper()
     
     # 1. 識別模型方法
@@ -44,14 +47,13 @@ def infer_metadata(path: Path):
             method = m
             break
             
-    # 2. 識別資料集
+    # 2. 識別資料集 (以原始檔名中段優先)
     dataset = 'unknown'
     for d in DATASET_MAP.keys():
-        if d in stem:
+        if d in path.name: # 直接從完整原始檔名撈取，防止中途切除
             dataset = d
             break
-    # 兼容舊命名的 `_ibm_` 對應到 `hi_small`
-    if '_ibm_' in stem:
+    if '_ibm_' in path.name:
         dataset = 'hi_small'
             
     # 3. 識別比例
@@ -68,16 +70,16 @@ def infer_metadata(path: Path):
             sampling = s.upper()
             break
             
-    # 5. 識別指標類型 (AUC-PRC, F1_90, F1_99)
-    if '_F1_90_' in stem_upper:
+    # 5. 識別指標類型
+    if 'F1_90' in stem_upper:
         metric_type = 'F1_90'
-    elif '_F1_99_' in stem_upper:
+    elif 'F1_99' in stem_upper:
         metric_type = 'F1_99'
     else:
         metric_type = 'AUC-PRC'
         
     return method, dataset, ratio, sampling, metric_type
-
+    
 def parse_metrics(path: Path, metric_type: str):
     """
     從檔案內容解析指標數值。支援：
