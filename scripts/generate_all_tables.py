@@ -18,12 +18,12 @@ METHODS = ['INTRINSIC', 'POSITIONAL', 'DEEPWALK', 'NODE2VEC', 'GCN', 'SAGE', 'GA
 
 # 採樣技術列表
 SAMPLING_TECHNIQUES = {
-    'NONE': '無採樣基準 (NONE)',
-    'RUS': '隨機下採樣 (RUS)',
-    'SMOTE': '合成少數類過採樣 (SMOTE)',
-    'GRAPH_SMOTE': '圖合成過採樣 (GRAPH_SMOTE)',
-    'GRAPH_ENSEMBLE_SMOTE': '圖集成過採樣 (GRAPH_ENSEMBLE_SMOTE)',
-    'REWEIGHTED_GRAPH_SMOTE': '重加權圖過採樣 (REWEIGHTED_GRAPH_SMOTE)'
+    'NONE': 'NONE',
+    'RUS': 'RUS',
+    'SMOTE': 'SMOTE',
+    'GRAPH_SMOTE': 'GRAPH_SMOTE',
+    'GRAPH_ENSEMBLE_SMOTE': 'GRAPH_ENSEMBLE_SMOTE',
+    'REWEIGHTED_GRAPH_SMOTE': 'REWEIGHTED_GRAPH_SMOTE'
 }
 
 # 欄位定義 (重採樣目標比例)
@@ -132,6 +132,10 @@ def main():
         print("Error: 'res' directory not found. Please run this script in the root of your workspace.")
         return
 
+    # 確保輸出目錄 tables 存在
+    tables_dir = Path('tables')
+    tables_dir.mkdir(exist_ok=True)
+
     # 巢狀字典結構: matrix[metric_type][dataset][sampling][method][ratio] = value
     matrix = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dict))))
     
@@ -159,56 +163,51 @@ def main():
     for m_type in ['AUC-PRC', 'F1_90', 'F1_99']:
         output_lines = []
         output_lines.append(f"# Resampling Ratio Impact Analysis Matrix ({m_type})\n")
-        output_lines.append("> 橫向對比不同的不平衡重採樣技術與比例對模型最終泛化表現的實質影響：\n\n---\n")
         
         # 遍歷5個資料集
         for d_key in sorted(DATASET_MAP.keys()):
             d_name = DATASET_MAP[d_key]
             output_lines.append(f"##  Dataset: {d_name}\n")
             
-            # 遍歷所有的採樣技術，為每個技術產生一個對比表
+            # 遍歷所有的採樣技術
             for s_key in ['NONE', 'RUS', 'SMOTE', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE']:
                 s_name = SAMPLING_TECHNIQUES[s_key]
                 
-                # 檢查這個資料集與技術下，是否有任何模型的數據。若完全沒數據則跳過不畫，保持排版乾淨。
-                has_any_data = False
-                for method in METHODS:
-                    for ratio in RATIOS:
+                # 遍歷每一個 Ratio，為每個 Ratio 獨立繪製一個表格
+                for ratio in RATIOS:
+                    
+                    # 檢查在此 資料集 + 採樣技術 + 特定Ratio 下，是否有任何模型的數據。若無則跳過。
+                    has_any_data = False
+                    for method in METHODS:
                         if ratio in matrix[m_type][d_key][s_key][method]:
                             has_any_data = True
                             break
-                
-                if not has_any_data:
-                    continue
                     
-                output_lines.append(f"###  Sampling Technique: {s_name}\n")
-                
-                # 輸出表頭
-                headers = ['Method / Baseline', 'Imbalance original', 'Imbalance ratio_1to10', 'Imbalance ratio_1to2', 'Imbalance ratio_1to1']
-                output_lines.append('| ' + ' | '.join(headers) + ' |')
-                output_lines.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
-                
-                # 輸出每一列模型數據
-                for method in METHODS:
-                    row_cells = [f"**{method}**"]
-                    row_has_data = False
-                    for ratio in RATIOS:
+                    if not has_any_data:
+                        continue
+                        
+                    output_lines.append(f"###  Sampling Technique: {s_name} ({ratio})\n")
+                    
+                    # 輸出新表頭：改為 Method 與對應的值
+                    headers = ['Method / Baseline', f'Value ({m_type})']
+                    output_lines.append('| ' + ' | '.join(headers) + ' |')
+                    output_lines.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
+                    
+                    # 輸出每一列模型數據
+                    for method in METHODS:
                         val = matrix[m_type][d_key][s_key][method].get(ratio, 'N/A')
                         if val != 'N/A':
-                            row_has_data = True
-                        row_cells.append(str(val))
+                            row_cells = [f"**{method}**", str(val)]
+                            output_lines.append('| ' + ' | '.join(row_cells) + ' |')
                     
-                    if row_has_data:
-                        output_lines.append('| ' + ' | '.join(row_cells) + ' |')
-                
-                output_lines.append("\n---\n")
+                    output_lines.append("\n---\n")
             
             output_lines.append("\n================================================================================\n")
             
         # 寫入對應指標的獨立 Markdown 表格中
-        output_file = Path('tables') / f"ratio_comparison_tables_{m_type.lower().replace('-', '_')}.md"
+        output_file = tables_dir / f"ratio_comparison_tables_{m_type.lower().replace('-', '_')}.md"
         output_file.write_text('\n'.join(output_lines), encoding='utf-8')
-        print(f"[Success] Unified tables for {m_type} saved to: {output_file}")
+        print(f"[Success] Split tables for {m_type} saved to: {output_file}")
 
 if __name__ == "__main__":
     main()
