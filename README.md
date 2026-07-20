@@ -34,7 +34,7 @@ To ensure realistic AML modeling, our pipeline strictly enforces time-series iso
                                      +---> Early Stop?   v
                                      |    (Patience=10) [Metrics Output]
                                      v                  - AUC-PRC
-                              Save best_model.pt        - F1_90 / F1_99
+                              Save best_model.pt        - F1_99
 ```
 
 ---
@@ -82,7 +82,7 @@ To resolve overfitting caused by severe class imbalance, the deep learning pipel
 ### 🎯 Test Evaluation & Metrics
 The final reported figures are evaluated on the untouched test subset using:
 - **AUC-PRC** (`average_precision_score`) via scikit-learn.
-- **Percentile-Based F1-Score**: Converts predicted probabilities into hard predictions by flagging the top $N\%$ most suspicious transactions (default `percentile_q=99` for top 1% anomaly threshold; F1-90 also tested).
+- **Percentile-Based F1-Score**: Converts predicted probabilities into hard predictions by flagging the top $N\%$ most suspicious transactions (default `percentile_q=99` for top 1% anomaly threshold).
 
 ---
 
