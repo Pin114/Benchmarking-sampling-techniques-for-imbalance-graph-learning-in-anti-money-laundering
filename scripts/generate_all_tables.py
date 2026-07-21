@@ -13,10 +13,8 @@ DATASET_MAP = {
     'elliptic': 'ELLIPTIC'
 }
 
-# 支援的所有模型方法
 METHODS = ['INTRINSIC', 'POSITIONAL', 'DEEPWALK', 'NODE2VEC', 'GCN', 'SAGE', 'GAT', 'GIN']
 
-# 採樣技術列表
 SAMPLING_TECHNIQUES = {
     'NONE': 'NONE',
     'RUS': 'RUS',
@@ -26,14 +24,12 @@ SAMPLING_TECHNIQUES = {
     'REWEIGHTED_GRAPH_SMOTE': 'REWEIGHTED_GRAPH_SMOTE'
 }
 
-# 欄位定義 (重採樣目標比例)
 RATIOS = ['original', 'ratio_1to10', 'ratio_1to2', 'ratio_1to1']
 
 def infer_metadata(path: Path):
     name = path.name
     stem = name[:-12] if name.endswith('_summary.txt') else (name[:-4] if name.endswith('.txt') else name)
     
-    # 【核心清洗補丁】：如果檔名尾端因為舊腳本 Bug 重複出現了資料集後綴（如 xxx_hi_medium_hi_medium），直接把它切乾淨
     for d_tag in ['hi_small', 'hi_medium', 'li_small', 'li_medium', 'elliptic']:
         if stem.endswith(f"_{d_tag}"):
             stem = stem[:-len(f"_{d_tag}")]
@@ -50,7 +46,7 @@ def infer_metadata(path: Path):
     # 2. 識別資料集 (以原始檔名中段優先)
     dataset = 'unknown'
     for d in DATASET_MAP.keys():
-        if d in path.name: # 直接從完整原始檔名撈取，防止中途切除
+        if d in path.name: 
             dataset = d
             break
     if '_ibm_' in path.name:
