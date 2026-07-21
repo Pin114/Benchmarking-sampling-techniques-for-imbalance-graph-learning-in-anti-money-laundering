@@ -6,7 +6,7 @@ By implementing strict **temporal splits** (chronological isolation) and a valid
 
 ---
 
-## 📂 1. Pipeline Architecture & Data Flow
+##  1. Pipeline Architecture & Data Flow
 
 To ensure realistic AML modeling, our pipeline strictly enforces time-series isolation:
 1. **Raw State Ingestion**: Features are loaded and engineered with zero front-end resampling or label proportion adjustments.
@@ -39,7 +39,7 @@ To ensure realistic AML modeling, our pipeline strictly enforces time-series iso
 
 ---
 
-## 📊 2. Dataset Classification & Partitioning
+##  2. Dataset Classification & Partitioning
 
 The pipeline natively supports **five major benchmark datasets**:
 
@@ -53,15 +53,15 @@ The pipeline natively supports **five major benchmark datasets**:
 
 ---
 
-## ⚙️ 3. Supported Methods & Resampling Techniques
+##  3. Supported Methods & Resampling Techniques
 
-### 🧠 Graph Representational & Feature-based Models (Baselines)
+###  Graph Representational & Feature-based Models (Baselines)
 - **Intrinsic Features**: 2-layer MLP decoder running on native transactional features.
 - **Positional Features**: Topology-based features (e.g., PageRank, Personalized PageRank) combined with an MLP decoder.
 - **DeepWalk & Node2Vec**: Random walk-based graph embeddings mapped to downstream classifiers.
 - **Graph Neural Networks (GNNs)**: 2-layer GNN architectures (`hidden_dim=64`, `embedding_dim=32`, `dropout=0.3`) including **GCN**, **GraphSAGE**, **GAT**, and **GIN**.
 
-### 🔄 Resampling and Structural Augmentation Techniques
+###  Resampling and Structural Augmentation Techniques
 - **NONE**: Training on the original imbalanced split (baseline).
 - **RUS**: Random Undersampling of the majority class inside the training mask.
 - **SMOTE**: Feature-space synthetic minority over-sampling applied to intrinsic/positional features using `imblearn`.
@@ -71,22 +71,22 @@ The pipeline natively supports **five major benchmark datasets**:
 
 ---
 
-## 📈 4. Training, Validation & Downstream Evaluation
+##  4. Training, Validation & Downstream Evaluation
 
-### ⏹️ Early Stopping (Val AP Guided)
+###  Early Stopping (Val AP Guided)
 To resolve overfitting caused by severe class imbalance, the deep learning pipeline utilizes a dedicated **Early Stopping** class:
 * **Metric Monitored**: `val_ap` (Average Precision / AUC-PRC on the validation split). *Note: AP is utilized rather than Cross-Entropy Loss, as Loss can easily be minimized by classifying all nodes as the majority class, whereas AP specifically focuses on minority class precision-recall trade-offs.*
 * **Patience**: Defaulted to `10` epochs.
 * **Checkpointing**: Saves the best-performing model parameter weights to `res/checkpoints/best_model_{method}_{result_tag}.pt`. Upon training completion or early termination, these optimal weights are automatically re-loaded prior to evaluating on the test dataset.
 
-### 🎯 Test Evaluation & Metrics
+###  Test Evaluation & Metrics
 The final reported figures are evaluated on the untouched test subset using:
 - **AUC-PRC** (`average_precision_score`) via scikit-learn.
 - **Percentile-Based F1-Score**: Converts predicted probabilities into hard predictions by flagging the top $N\%$ most suspicious transactions (default `percentile_q=99` for top 1% anomaly threshold).
 
 ---
 
-## 🚀 5. How to Run
+##  5. How to Run
 
 ### Install Dependencies
 Ensure you have the required GNN and resampling libraries installed:
@@ -116,7 +116,6 @@ pip install torch torch-geometric pandas numpy scikit-learn imbalanced-learn net
    ```
    This compiles all seeds and average configurations into:
    * `res/ratio_comparison_tables_auc_prc.md`
-   * `res/ratio_comparison_tables_f1_90.md`
    * `res/ratio_comparison_tables_f1_99.md`
 
 ---
