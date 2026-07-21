@@ -9,77 +9,124 @@ from src.methods.utils.GNN import *
 from src.utils.Network import *
 from src.methods.utils.decoder import *
 from src.methods.evaluation import (
-    smote_mask, 
-    graph_smote_mask, 
-    reweighted_graph_smote_mask, 
-    graph_ensemble_smote_mask, 
-    EarlyStopping
+    smote_mask,
+    graph_smote_mask,
+    reweighted_graph_smote_mask,
+    graph_ensemble_smote_mask,
+    EarlyStopping,
+    random_undersample_mask
 )
 from sklearn.metrics import average_precision_score
 import os
 import numpy as np
 
 def intrinsic_features(
-    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder, percentile_q=99
+    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder, ratio=None, sampling="none", percentile_q=99
 ):
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    X_train, y_train, X_test, y_test = ntw.get_train_test_split_intrinsic(train_mask, test_mask, device=device_decoder)
+    X = ntw.get_features(full=True)
+    X_tensor = torch.tensor(X.values, dtype=torch.float32)
+    y_tensor = torch.tensor(ntw.y, dtype=torch.long)
+    
+    if sampling == "smote":
+        X_res, y_res, train_mask_res = smote_mask(
+            train_mask, X_tensor, y_tensor, ratio=ratio, k_neighbors=5, random_state=42
+        )
+        X_train = X_res[train_mask_res].to(device_decoder)
+        y_train = y_res[train_mask_res].to(device_decoder)
+    else:
+        X_train = X_tensor[train_mask].to(device_decoder)
+        y_train = y_tensor[train_mask].to(device_decoder)
+        
+    X_test = X_tensor[test_mask].to(device_decoder)
+    y_test = y_tensor[test_mask].to(device_decoder)
+
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    
+    # Use class weights for decoder to prevent trivial All-0s/All-1s predictions
+    num_pos = int((y_train == 1).sum().item())
+    num_neg = int((y_train == 0).sum().item())
+    pos_weight = float(num_neg) / max(num_pos, 1)
+    weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
+    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
         output = decoder(X_train)
         loss = criterion(output, y_train)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(decoder.parameters(), max_norm=1.0)
         optimizer.step()
+        
     decoder.eval()
-    y_pred = decoder(X_test)
-    y_pred = y_pred.softmax(dim=1)
-    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
+    with torch.no_grad():
+        y_pred = decoder(X_test)
+        y_pred = y_pred.softmax(dim=1)
+    ap_score = average_precision_score(y_test.cpu().numpy(), y_pred.cpu().numpy()[:,1])
     from sklearn.metrics import f1_score
-    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
-    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
-    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
+    cutoff = np.percentile(y_pred.cpu().numpy()[:,1], percentile_q)
+    y_pred_hard = (y_pred.cpu().numpy()[:,1] >= cutoff).astype(int)
+    f1 = f1_score(y_test.cpu().numpy(), y_pred_hard)
     return (ap_score, f1)
 
 def intrinsic_features_with_predictions(
-    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder
+    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder, ratio=None, sampling="none"
 ):
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    X_train, y_train, X_test, y_test = ntw.get_train_test_split_intrinsic(train_mask, test_mask, device=device_decoder)
+    X = ntw.get_features(full=True)
+    X_tensor = torch.tensor(X.values, dtype=torch.float32)
+    y_tensor = torch.tensor(ntw.y, dtype=torch.long)
+    
+    if sampling == "smote":
+        X_res, y_res, train_mask_res = smote_mask(
+            train_mask, X_tensor, y_tensor, ratio=ratio, k_neighbors=5, random_state=42
+        )
+        X_train = X_res[train_mask_res].to(device_decoder)
+        y_train = y_res[train_mask_res].to(device_decoder)
+    else:
+        X_train = X_tensor[train_mask].to(device_decoder)
+        y_train = y_tensor[train_mask].to(device_decoder)
+        
+    X_test = X_tensor[test_mask].to(device_decoder)
+    y_test = y_tensor[test_mask].to(device_decoder)
+
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    
+    num_pos = int((y_train == 1).sum().item())
+    num_neg = int((y_train == 0).sum().item())
+    pos_weight = float(num_neg) / max(num_pos, 1)
+    weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
+    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
         output = decoder(X_train)
         loss = criterion(output, y_train)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(decoder.parameters(), max_norm=1.0)
         optimizer.step()
+        
     decoder.eval()
-    y_pred = decoder(X_test)
-    y_pred = y_pred.softmax(dim=1)
-    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
-    return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
+    with torch.no_grad():
+        y_pred = decoder(X_test)
+        y_pred = y_pred.softmax(dim=1)
+    ap_score = average_precision_score(y_test.cpu().numpy(), y_pred.cpu().numpy()[:,1])
+    return ap_score, y_pred.cpu().numpy()[:,1], y_test.cpu().numpy()
 
 def positional_features(
-    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float,
-    fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2,
-    hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, percentile_q: int = 99
+    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float, fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2, hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, ratio=None, sampling="none", percentile_q: int = 99
 ):
-    print("intrinsic and summary: ")
     X = ntw.get_features(full=True)
-    print("networkx: ")
     ntw_nx = ntw.get_network_nx()
     features_nx_df = local_features_nx(ntw_nx, alpha_pr, alpha_ppr, fraud_dict_train=fraud_dict_train, ntw_name=ntw_name)
-    print("networkit: ")
     ntw_nk = ntw.get_network_nk()
     features_nk_df = features_nk(ntw_nk, ntw_name=ntw_name)
     if use_intrinsic:
@@ -87,48 +134,65 @@ def positional_features(
     else:
         features_df = pd.concat([features_nx_df, features_nk_df], axis=1)
     features_df["fraud"] = [fraud_dict_test[x] for x in features_df.index]
+    
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    features_df_train = features_df[train_mask.numpy()]
-    x_train_features = features_df_train.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    x_train = torch.tensor(x_train_features, dtype=torch.float32).to(device_decoder)
-    y_train = torch.tensor(features_df_train["fraud"].values, dtype=torch.long).to(device_decoder)
-    features_df_test = features_df[test_mask.numpy()]
-    x_test_features = features_df_test.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    x_test = torch.tensor(x_test_features, dtype=torch.float32).to(device_decoder)
-    y_test = torch.tensor(features_df_test["fraud"].values, dtype=torch.long).to(device_decoder)
+    
+    x_all_features = features_df.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    y_all = features_df["fraud"].values
+    
+    X_tensor = torch.tensor(x_all_features, dtype=torch.float32)
+    y_tensor = torch.tensor(y_all, dtype=torch.long)
+    
+    if sampling == "smote":
+        X_res, y_res, train_mask_res = smote_mask(
+            train_mask, X_tensor, y_tensor, ratio=ratio, k_neighbors=5, random_state=42
+        )
+        x_train = X_res[train_mask_res].to(device_decoder)
+        y_train = y_res[train_mask_res].to(device_decoder)
+    else:
+        x_train = X_tensor[train_mask].to(device_decoder)
+        y_train = y_tensor[train_mask].to(device_decoder)
+        
+    x_test = X_tensor[test_mask].to(device_decoder)
+    y_test = y_tensor[test_mask].to(device_decoder)
+
     decoder = Decoder_deep_norm(x_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    
+    num_pos = int((y_train == 1).sum().item())
+    num_neg = int((y_train == 0).sum().item())
+    pos_weight = float(num_neg) / max(num_pos, 1)
+    weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
+    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
         output = decoder(x_train)
         loss = criterion(output, y_train)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(decoder.parameters(), max_norm=1.0)
         optimizer.step()
+        
     decoder.eval()
-    y_pred = decoder(x_test)
-    y_pred = y_pred.softmax(dim=1)
-    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
+    with torch.no_grad():
+        y_pred = decoder(x_test)
+        y_pred = y_pred.softmax(dim=1)
+    ap_score = average_precision_score(y_test.cpu().numpy(), y_pred.cpu().numpy()[:,1])
     from sklearn.metrics import f1_score
-    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
-    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
-    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
+    cutoff = np.percentile(y_pred.cpu().numpy()[:,1], percentile_q)
+    y_pred_hard = (y_pred.cpu().numpy()[:,1] >= cutoff).astype(int)
+    f1 = f1_score(y_test.cpu().numpy(), y_pred_hard)
     return (ap_score, f1)
 
 def positional_features_with_predictions(
-    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float,
-    fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2,
-    hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False
+    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float, fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2, hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, ratio=None, sampling="none"
 ):
-    print("intrinsic and summary: ")
     X = ntw.get_features(full=True)
-    print("networkx: ")
     ntw_nx = ntw.get_network_nx()
     features_nx_df = local_features_nx(ntw_nx, alpha_pr, alpha_ppr, fraud_dict_train=fraud_dict_train, ntw_name=ntw_name)
-    print("networkit: ")
     ntw_nk = ntw.get_network_nk()
     features_nk_df = features_nk(ntw_nk, ntw_name=ntw_name)
     if use_intrinsic:
@@ -136,197 +200,251 @@ def positional_features_with_predictions(
     else:
         features_df = pd.concat([features_nx_df, features_nk_df], axis=1)
     features_df["fraud"] = [fraud_dict_test[x] for x in features_df.index]
+    
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    features_df_train = features_df[train_mask.numpy()]
-    x_train_features = features_df_train.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    x_train = torch.tensor(x_train_features, dtype=torch.float32).to(device_decoder)
-    y_train = torch.tensor(features_df_train["fraud"].values, dtype=torch.long).to(device_decoder)
-    features_df_test = features_df[test_mask.numpy()]
-    x_test_features = features_df_test.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    x_test = torch.tensor(x_test_features, dtype=torch.float32).to(device_decoder)
-    y_test = torch.tensor(features_df_test["fraud"].values, dtype=torch.long).to(device_decoder)
+    
+    x_all_features = features_df.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    y_all = features_df["fraud"].values
+    
+    X_tensor = torch.tensor(x_all_features, dtype=torch.float32)
+    y_tensor = torch.tensor(y_all, dtype=torch.long)
+    
+    if sampling == "smote":
+        X_res, y_res, train_mask_res = smote_mask(
+            train_mask, X_tensor, y_tensor, ratio=ratio, k_neighbors=5, random_state=42
+        )
+        x_train = X_res[train_mask_res].to(device_decoder)
+        y_train = y_res[train_mask_res].to(device_decoder)
+    else:
+        x_train = X_tensor[train_mask].to(device_decoder)
+        y_train = y_tensor[train_mask].to(device_decoder)
+        
+    x_test = X_tensor[test_mask].to(device_decoder)
+    y_test = y_tensor[test_mask].to(device_decoder)
+
     decoder = Decoder_deep_norm(x_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    
+    num_pos = int((y_train == 1).sum().item())
+    num_neg = int((y_train == 0).sum().item())
+    pos_weight = float(num_neg) / max(num_pos, 1)
+    weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
+    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
         output = decoder(x_train)
         loss = criterion(output, y_train)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(decoder.parameters(), max_norm=1.0)
         optimizer.step()
+        
     decoder.eval()
-    y_pred = decoder(x_test)
-    y_pred = y_pred.softmax(dim=1)
-    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
-    return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
+    with torch.no_grad():
+        y_pred = decoder(x_test)
+        y_pred = y_pred.softmax(dim=1)
+    ap_score = average_precision_score(y_test.cpu().numpy(), y_pred.cpu().numpy()[:,1])
+    return ap_score, y_pred.cpu().numpy()[:,1], y_test.cpu().numpy()
 
 def node2vec_features(
-    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q,
-    lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx = None, use_torch = False, use_intrinsic=True, percentile_q=99
+    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx = None, use_torch = False, use_intrinsic=True, ratio=None, sampling="none", percentile_q=99
 ):
-    if use_torch:
-        active_nodes = (train_mask.bool() | test_mask.bool())
-        active_idx = None
-        if active_nodes.any():
-            active_idx = torch.where(active_nodes)[0]
-            node_map = {int(old_idx): new_idx for new_idx, old_idx in enumerate(active_idx.tolist())}
-            edge_pairs = []
-            for src, dst in ntw_torch.edge_index.t().tolist():
-                if src in node_map and dst in node_map:
-                    edge_pairs.append((node_map[src], node_map[dst]))
-            if edge_pairs:
-                filtered_edge_index = torch.tensor(edge_pairs, dtype=torch.long).t().contiguous()
-            else:
-                filtered_edge_index = torch.empty((2, 0), dtype=torch.long)
-            filtered_graph = ntw_torch.clone()
-            filtered_graph.edge_index = filtered_edge_index
-            filtered_graph.x = ntw_torch.x[active_idx]
-            filtered_graph.num_nodes = int(active_idx.shape[0])
-            graph_for_n2v = filtered_graph
+    # Perform oversampling if specified
+    if sampling in ["graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"]:
+        if sampling == "reweighted_graph_smote":
+            x_res, y_res, train_mask_res, edge_index_res, edge_attr_res = reweighted_graph_smote_mask(
+                train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=5, random_state=42
+            )
+        elif sampling == "graph_ensemble_smote":
+            x_res, y_res, train_mask_res, edge_index_res = graph_ensemble_smote_mask(
+                train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=5, random_state=42
+            )
         else:
-            graph_for_n2v = ntw_torch
-        model_n2v = node2vec_representation_torch(
-            graph_for_n2v, train_mask = train_mask, test_mask = test_mask, embedding_dim=embedding_dim,
-            walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node,
-            num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
-        )
-        model_n2v.eval()
-        x = model_n2v()
-        x = x.detach().to('cpu')
-        x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
-        if active_nodes.any() and active_idx is not None and x.shape[0] != ntw_torch.num_nodes:
-            x_full = torch.zeros((ntw_torch.num_nodes, x.shape[1]), dtype=x.dtype)
-            x_full[active_idx] = x
-            x = x_full
+            x_res, y_res, train_mask_res, edge_index_res = graph_smote_mask(
+                train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=5, random_state=42
+            )
+        graph_for_n2v = ntw_torch.clone()
+        graph_for_n2v.x = x_res
+        graph_for_n2v.y = y_res
+        graph_for_n2v.edge_index = edge_index_res
+        train_mask_for_n2v = train_mask_res
     else:
-        model_n2v = node2vec_representation_nx(
-            ntw_nx, embedding_dim=embedding_dim, walk_length=walk_length, context_size=context_size,
-            walks_per_node=walks_per_node, num_negative_samples=num_negative_samples, p=p, q=q
-        )
-        print("Saving node2vec embedding...")
-        x_df = pd.DataFrame([model_n2v(n) for n in ntw_nx.nodes()], index=ntw_nx.nodes())
-        x = torch.tensor(x_df.values).to('cpu')
-        x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
+        graph_for_n2v = ntw_torch
+        train_mask_for_n2v = train_mask
+
+    if use_torch:
+        active_nodes = (train_mask_for_n2v.bool() | test_mask.bool())
+        active_idx = torch.where(active_nodes)[0] if active_nodes.any() else None
+        node_map = {int(old_idx): new_idx for new_idx, old_idx in enumerate(active_idx.tolist())} if active_idx is not None else {}
+        edge_pairs = []
+        for src, dst in graph_for_n2v.edge_index.t().tolist():
+            if src in node_map and dst in node_map:
+                edge_pairs.append((node_map[src], node_map[dst]))
+        if edge_pairs:
+            filtered_edge_index = torch.tensor(edge_pairs, dtype=torch.long).t().contiguous()
+        else:
+            filtered_edge_index = torch.empty((2, 0), dtype=torch.long)
+        filtered_graph = graph_for_n2v.clone()
+        filtered_graph.edge_index = filtered_edge_index
+        filtered_graph.x = graph_for_n2v.x[active_idx] if active_idx is not None else graph_for_n2v.x
+        filtered_graph.num_nodes = int(active_idx.shape[0]) if active_idx is not None else graph_for_n2v.num_nodes
+        n2v_input_graph = filtered_graph
+    else:
+        n2v_input_graph = graph_for_n2v
+
+    model_n2v = node2vec_representation_torch(
+        n2v_input_graph, train_mask=train_mask_for_n2v, test_mask=test_mask, embedding_dim=embedding_dim, walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node, num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
+    )
+    model_n2v.eval()
+    x = model_n2v().detach().to('cpu')
+    x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
     
-    x_intrinsic = ntw_torch.x.detach().to('cpu')
+    if use_torch and active_nodes.any() and active_idx is not None and x.shape[0] != graph_for_n2v.num_nodes:
+        x_full = torch.zeros((graph_for_n2v.num_nodes, x.shape[1]), dtype=x.dtype)
+        x_full[active_idx] = x
+        x = x_full
+
+    x_intrinsic = graph_for_n2v.x.detach().to('cpu')
     x_intrinsic = torch.nan_to_num(x_intrinsic, nan=0.0, posinf=1e5, neginf=-1e5)
     if use_intrinsic:
         x = torch.cat((x, x_intrinsic), 1)
-    
+        
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    x_train = x[train_mask].to(device_decoder).squeeze()
+    x_train = x[train_mask_for_n2v].to(device_decoder).squeeze()
     x_test = x[test_mask].to(device_decoder).squeeze()
-    y_train = ntw_torch.y[train_mask].to(device_decoder).squeeze()
-    y_test = ntw_torch.y[test_mask].to(device_decoder).squeeze()
-    
+    y_train = graph_for_n2v.y[train_mask_for_n2v].to(device_decoder).squeeze()
+    y_test = graph_for_n2v.y[test_mask].to(device_decoder).squeeze()
+
     decoder = Decoder_deep_norm(x_train.shape[1], 2, 10).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    
+    num_pos = int((y_train == 1).sum().item())
+    num_neg = int((y_train == 0).sum().item())
+    pos_weight = float(num_neg) / max(num_pos, 1)
+    weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
+    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
         output = decoder(x_train)
         loss = criterion(output, y_train)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(decoder.parameters(), max_norm=1.0)
         optimizer.step()
+        
     decoder.eval()
-    y_pred = decoder(x_test)
-    y_pred = y_pred.softmax(dim=1)
-    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
-    from sklearn.metrics import f1_score
-    cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
-    y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
-    f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
+    with torch.no_grad():
+        y_pred = decoder(x_test)
+        y_pred = y_pred.softmax(dim=1)
+    ap_score = average_precision_score(y_test.cpu().numpy(), y_pred.cpu().numpy()[:,1])
+    cutoff = np.percentile(y_pred.cpu().numpy()[:,1], percentile_q)
+    y_pred_hard = (y_pred.cpu().numpy()[:,1] >= cutoff).astype(int)
+    f1 = f1_score(y_test.cpu().numpy(), y_pred_hard)
     return (ap_score, f1)
 
 def node2vec_features_with_predictions(
-    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q,
-    lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx = None, use_torch = False, use_intrinsic=True
+    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx = None, use_torch = False, use_intrinsic=True, ratio=None, sampling="none"
 ):
-    if use_torch:
-        active_nodes = (train_mask.bool() | test_mask.bool())
-        active_idx = None
-        if active_nodes.any():
-            active_idx = torch.where(active_nodes)[0]
-            node_map = {int(old_idx): new_idx for new_idx, old_idx in enumerate(active_idx.tolist())}
-            edge_pairs = []
-            for src, dst in ntw_torch.edge_index.t().tolist():
-                if src in node_map and dst in node_map:
-                    edge_pairs.append((node_map[src], node_map[dst]))
-            if edge_pairs:
-                filtered_edge_index = torch.tensor(edge_pairs, dtype=torch.long).t().contiguous()
-            else:
-                filtered_edge_index = torch.empty((2, 0), dtype=torch.long)
-            filtered_graph = ntw_torch.clone()
-            filtered_graph.edge_index = filtered_edge_index
-            filtered_graph.x = ntw_torch.x[active_idx]
-            filtered_graph.num_nodes = int(active_idx.shape[0])
-            graph_for_n2v = filtered_graph
+    if sampling in ["graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"]:
+        if sampling == "reweighted_graph_smote":
+            x_res, y_res, train_mask_res, edge_index_res, edge_attr_res = reweighted_graph_smote_mask(
+                train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=5, random_state=42
+            )
+        elif sampling == "graph_ensemble_smote":
+            x_res, y_res, train_mask_res, edge_index_res = graph_ensemble_smote_mask(
+                train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=5, random_state=42
+            )
         else:
-            graph_for_n2v = ntw_torch
-        model_n2v = node2vec_representation_torch(
-            graph_for_n2v, train_mask = train_mask, test_mask = test_mask, embedding_dim=embedding_dim,
-            walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node,
-            num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
-        )
-        model_n2v.eval()
-        x = model_n2v()
-        x = x.detach().to('cpu')
-        x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
-        if active_nodes.any() and active_idx is not None and x.shape[0] != ntw_torch.num_nodes:
-            x_full = torch.zeros((ntw_torch.num_nodes, x.shape[1]), dtype=x.dtype)
-            x_full[active_idx] = x
-            x = x_full
+            x_res, y_res, train_mask_res, edge_index_res = graph_smote_mask(
+                train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=5, random_state=42
+            )
+        graph_for_n2v = ntw_torch.clone()
+        graph_for_n2v.x = x_res
+        graph_for_n2v.y = y_res
+        graph_for_n2v.edge_index = edge_index_res
+        train_mask_for_n2v = train_mask_res
     else:
-        model_n2v = node2vec_representation_nx(
-            ntw_nx, embedding_dim=embedding_dim, walk_length=walk_length, context_size=context_size,
-            walks_per_node=walks_per_node, num_negative_samples=num_negative_samples, p=p, q=q
-        )
-        print("Saving node2vec embedding...")
-        x_df = pd.DataFrame([model_n2v(n) for n in ntw_nx.nodes()], index=ntw_nx.nodes())
-        x = torch.tensor(x_df.values).to('cpu')
-        x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
+        graph_for_n2v = ntw_torch
+        train_mask_for_n2v = train_mask
+
+    if use_torch:
+        active_nodes = (train_mask_for_n2v.bool() | test_mask.bool())
+        active_idx = torch.where(active_nodes)[0] if active_nodes.any() else None
+        node_map = {int(old_idx): new_idx for new_idx, old_idx in enumerate(active_idx.tolist())} if active_idx is not None else {}
+        edge_pairs = []
+        for src, dst in graph_for_n2v.edge_index.t().tolist():
+            if src in node_map and dst in node_map:
+                edge_pairs.append((node_map[src], node_map[dst]))
+        if edge_pairs:
+            filtered_edge_index = torch.tensor(edge_pairs, dtype=torch.long).t().contiguous()
+        else:
+            filtered_edge_index = torch.empty((2, 0), dtype=torch.long)
+        filtered_graph = graph_for_n2v.clone()
+        filtered_graph.edge_index = filtered_edge_index
+        filtered_graph.x = graph_for_n2v.x[active_idx] if active_idx is not None else graph_for_n2v.x
+        filtered_graph.num_nodes = int(active_idx.shape[0]) if active_idx is not None else graph_for_n2v.num_nodes
+        n2v_input_graph = filtered_graph
+    else:
+        n2v_input_graph = graph_for_n2v
+
+    model_n2v = node2vec_representation_torch(
+        n2v_input_graph, train_mask=train_mask_for_n2v, test_mask=test_mask, embedding_dim=embedding_dim, walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node, num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
+    )
+    model_n2v.eval()
+    x = model_n2v().detach().to('cpu')
+    x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
     
-    x_intrinsic = ntw_torch.x.detach().to('cpu')
+    if use_torch and active_nodes.any() and active_idx is not None and x.shape[0] != graph_for_n2v.num_nodes:
+        x_full = torch.zeros((graph_for_n2v.num_nodes, x.shape[1]), dtype=x.dtype)
+        x_full[active_idx] = x
+        x = x_full
+
+    x_intrinsic = graph_for_n2v.x.detach().to('cpu')
     x_intrinsic = torch.nan_to_num(x_intrinsic, nan=0.0, posinf=1e5, neginf=-1e5)
     if use_intrinsic:
         x = torch.cat((x, x_intrinsic), 1)
-    
+        
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    x_train = x[train_mask].to(device_decoder).squeeze()
+    x_train = x[train_mask_for_n2v].to(device_decoder).squeeze()
     x_test = x[test_mask].to(device_decoder).squeeze()
-    y_train = ntw_torch.y[train_mask].to(device_decoder).squeeze()
-    y_test = ntw_torch.y[test_mask].to(device_decoder).squeeze()
-    
+    y_train = graph_for_n2v.y[train_mask_for_n2v].to(device_decoder).squeeze()
+    y_test = graph_for_n2v.y[test_mask].to(device_decoder).squeeze()
+
     decoder = Decoder_deep_norm(x_train.shape[1], 2, 10).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    
+    num_pos = int((y_train == 1).sum().item())
+    num_neg = int((y_train == 0).sum().item())
+    pos_weight = float(num_neg) / max(num_pos, 1)
+    weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
+    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
         output = decoder(x_train)
         loss = criterion(output, y_train)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(decoder.parameters(), max_norm=1.0)
         optimizer.step()
+        
     decoder.eval()
-    y_pred = decoder(x_test)
-    y_pred = y_pred.softmax(dim=1)
-    ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
-    return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
+    with torch.no_grad():
+        y_pred = decoder(x_test)
+        y_pred = y_pred.softmax(dim=1)
+    ap_score = average_precision_score(y_test.cpu().numpy(), y_pred.cpu().numpy()[:,1])
+    return ap_score, y_pred.cpu().numpy()[:,1], y_test.cpu().numpy()
 
 def GNN_features(
-    ntw_torch: Data, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None,
-    val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
-    val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
-    percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt",
-    monitor: str = 'val_ap'
+    ntw_torch: Data, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap'
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -399,7 +517,6 @@ def GNN_features(
                 ap_score = int(correct.sum()) / max(int(correct.shape[0]), 1)
                 f1 = ap_score
             return {'loss': loss, 'ap': ap_score, 'f1': f1}
-
     for epoch in range(n_epochs):
         train_loss = train_epoch()
         if val_mask is not None:
@@ -411,11 +528,6 @@ def GNN_features(
                 if early_stopping.early_stop:
                     print(f"[GNN_features] 連續 {patience} 個 Epoch 未改善，終止訓練！")
                     break
-            else:
-                print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_result=None")
-        else:
-            print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f}")
-            
     if val_mask is not None and os.path.exists(checkpoint_path):
         print(f"[GNN_features] 載入驗證集最優表現模型權重: {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
@@ -425,10 +537,7 @@ def GNN_features(
     return test_result['ap'], test_result['f1']
 
 def GNN_features_with_predictions(
-    ntw_torch: Data, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None,
-    val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
-    val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
-    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap'
+    ntw_torch: Data, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap'
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -495,7 +604,6 @@ def GNN_features_with_predictions(
                 correct = pred == y
                 ap_score = int(correct.sum()) / max(int(correct.shape[0]), 1)
             return {'loss': loss, 'ap': ap_score, 'output': y_hat, 'y': y}
-
     for epoch in range(n_epochs):
         train_loss = train_epoch()
         if val_mask is not None:
@@ -507,26 +615,16 @@ def GNN_features_with_predictions(
                 if early_stopping.early_stop:
                     print(f"[GNN_features] 連續 {patience} 個 Epoch 未改善，終止訓練！")
                     break
-            else:
-                print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_result=None")
-        else:
-            print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f}")
-            
     if val_mask is not None and os.path.exists(checkpoint_path):
         print(f"[GNN_features] 載入驗證集最優表現模型權重: {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-    
     test_result = evaluate_split(test_mask)
     if test_result is None:
         raise RuntimeError('Test evaluation returned no data.')
     return test_result['ap'], test_result['output'].cpu().numpy()[:, 1], test_result['y'].cpu().numpy()
 
 def GNN_features_graphsmote(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None,
-    val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
-    val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
-    k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote",
-    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap'
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, ratio: float = None, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap'
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -550,16 +648,16 @@ def GNN_features_graphsmote(
 
     if sampling == "reweighted_graph_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=k_neighbors, random_state=random_state
         )
     elif sampling == "graph_ensemble_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_ensemble_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=k_neighbors, random_state=random_state
         )
         edge_attr_smote = None
-    else: # "graph_smote"
+    else:
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=k_neighbors, random_state=random_state
         )
         edge_attr_smote = None
 
@@ -573,8 +671,7 @@ def GNN_features_graphsmote(
     if not valid_mask.any():
         print("Warning: post-SMOTE filter left 0 samples. Fallback to normal GNN_features.")
         return GNN_features(
-            ntw_torch, model, lr, n_epochs, train_mask=train_mask, val_mask=val_mask, test_mask=test_mask,
-            use_intrinsic=use_intrinsic, percentile_q=percentile_q, patience=patience, checkpoint_path=checkpoint_path, monitor=monitor
+            ntw_torch, model, lr, n_epochs, train_mask=train_mask, val_mask=val_mask, test_mask=test_mask, use_intrinsic=use_intrinsic, percentile_q=percentile_q, patience=patience, checkpoint_path=checkpoint_path, monitor=monitor
         )
 
     ntw_torch_smote = ntw_torch.clone()
@@ -584,6 +681,7 @@ def GNN_features_graphsmote(
     if edge_attr_smote is not None:
         ntw_torch_smote.edge_attr = edge_attr_smote.to(device=device, dtype=torch.float32)
     train_mask_smote = valid_mask.bool().to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
 
     def train_epoch():
@@ -649,11 +747,6 @@ def GNN_features_graphsmote(
                 if early_stopping.early_stop:
                     print(f"[{sampling}] 連續 {patience} 個 Epoch 未改善，終止訓練！")
                     break
-            else:
-                print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_result=None")
-        else:
-            print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f}")
-
     if val_mask is not None and os.path.exists(checkpoint_path):
         print(f"[{sampling}] 載入驗證集最優表現模型權重: {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
@@ -663,11 +756,7 @@ def GNN_features_graphsmote(
     return test_result['ap'], test_result['f1']
 
 def GNN_features_graphsmote_with_predictions(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None,
-    val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
-    val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
-    k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote",
-    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap'
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, ratio: float = None, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap'
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -691,16 +780,16 @@ def GNN_features_graphsmote_with_predictions(
 
     if sampling == "reweighted_graph_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=k_neighbors, random_state=random_state
         )
     elif sampling == "graph_ensemble_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_ensemble_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=k_neighbors, random_state=random_state
         )
         edge_attr_smote = None
-    else: # "graph_smote"
+    else:
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, ratio=ratio, k_neighbors=k_neighbors, random_state=random_state
         )
         edge_attr_smote = None
 
@@ -714,8 +803,7 @@ def GNN_features_graphsmote_with_predictions(
     if not valid_mask.any():
         print("Warning: post-SMOTE filter left 0 samples. Fallback to normal GNN_with_predictions.")
         return GNN_features_with_predictions(
-            ntw_torch, model, lr, n_epochs, train_mask=train_mask, val_mask=val_mask, test_mask=test_mask,
-            use_intrinsic=use_intrinsic, patience=patience, checkpoint_path=checkpoint_path, monitor=monitor
+            ntw_torch, model, lr, n_epochs, train_mask=train_mask, val_mask=val_mask, test_mask=test_mask, use_intrinsic=use_intrinsic, patience=patience, checkpoint_path=checkpoint_path, monitor=monitor
         )
 
     ntw_torch_smote = ntw_torch.clone()
@@ -725,6 +813,7 @@ def GNN_features_graphsmote_with_predictions(
     if edge_attr_smote is not None:
         ntw_torch_smote.edge_attr = edge_attr_smote.to(device=device, dtype=torch.float32)
     train_mask_smote = valid_mask.bool().to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
 
     def train_epoch():
@@ -784,11 +873,6 @@ def GNN_features_graphsmote_with_predictions(
                 if early_stopping.early_stop:
                     print(f"[{sampling}] 連續 {patience} 個 Epoch 未改善，終止訓練！")
                     break
-            else:
-                print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_result=None")
-        else:
-            print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f}")
-
     if val_mask is not None and os.path.exists(checkpoint_path):
         print(f"[{sampling}] 載入驗證集最優表現模型權重: {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
