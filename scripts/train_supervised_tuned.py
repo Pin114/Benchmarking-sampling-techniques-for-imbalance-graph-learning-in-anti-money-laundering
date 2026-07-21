@@ -37,7 +37,7 @@ from src.methods.experiments_supervised_tuned import (
     GIN
 )
 from data.DatasetConstruction import load_ibm_config, load_elliptic
-from src.methods.evaluation import random_undersample_mask, adjust_mask_to_ratio
+from src.methods.evaluation import random_undersample_mask, adjust_mask_to_ratio, assert_ratio_achieved
 
 def set_seed(seed: int):
     if seed is None:
@@ -87,11 +87,16 @@ if __name__ == "__main__":
     train_mask, val_mask, test_mask = ntw.get_masks()
     to_train = ["intrinsic", "positional", "deepwalk", "node2vec", "gcn", "sage", "gat", "gin"]
     
+    # NOTE: "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote" are intentionally
+    # NOT offered for "deepwalk"/"node2vec". Those techniques oversample by interpolating in
+    # FEATURE space (SMOTE-style), but DeepWalk/Node2Vec embeddings are derived purely from
+    # graph topology (random walks over edges) -- there is no feature vector to interpolate
+    # before the embedding is computed, so these combinations cannot be wired in meaningfully.
     method_sampling_techniques = {
         "intrinsic": ["none", "random_undersample", "smote"],
         "positional": ["none", "random_undersample", "smote"],
-        "deepwalk": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],
-        "node2vec": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],
+        "deepwalk": ["none", "random_undersample"],
+        "node2vec": ["none", "random_undersample"],
         "gcn": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],
         "sage": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],
         "gat": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],
@@ -118,14 +123,6 @@ if __name__ == "__main__":
         print("\n" + "="*80)
         print(f"PHASE: Testing Class Imbalance Ratio: {ratio_tag.upper()} with LR={args.lr}, CLIP={args.clip_norm}")
         print("="*80)
-
-        if ratio is None:
-            train_mask_ratio = train_mask.clone()
-        else:
-            train_mask_ratio, _, _, _ = adjust_mask_to_ratio(
-                train_mask.clone(), ntw_torch.y.cpu(), target_ratio=ratio, random_state=42
-            )
-        train_mask_ratio = train_mask_ratio.to(train_mask.device)
 
         for method in to_train:
             print(f"\n Training {method.upper()}...")
@@ -165,28 +162,45 @@ if __name__ == "__main__":
                     print("SKIPPED (all results already exist)")
                     continue
 
-                if sampling == "none":
-                    train_mask_sampled = train_mask_ratio
-                else:
-                    train_mask_sampled = random_undersample_mask(
-                        train_mask_ratio.contiguous().view(-1), ntw_torch.y.cpu(), target_ratio=1.0
-                    )
-                train_mask_sampled = train_mask_sampled.to(train_mask_ratio.device)
+                assert_tag = f"{method}-{sampling}-{ratio_tag}"
 
                 try:
                     results = []
+
+                    # ----- Build the training mask for this ratio x technique -----
+                    if sampling == "none":
+                        train_mask_sampled, *_ = adjust_mask_to_ratio(
+                            train_mask.clone(), ntw_torch.y.cpu(), target_ratio=ratio, random_state=42
+                        )
+                        train_mask_sampled = train_mask_sampled.to(train_mask.device)
+                        assert_ratio_achieved(ntw_torch.y.cpu(), train_mask_sampled.cpu(), ratio, tag=assert_tag)
+                    elif sampling == "random_undersample":
+                        train_mask_sampled = random_undersample_mask(
+                            train_mask.clone().view(-1), ntw_torch.y.cpu(), target_ratio=ratio
+                        )
+                        train_mask_sampled = train_mask_sampled.to(train_mask.device)
+                        assert_ratio_achieved(ntw_torch.y.cpu(), train_mask_sampled.cpu(), ratio, tag=assert_tag)
+                    else:
+                        # "smote", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote":
+                        # the ORIGINAL train_mask is passed through unmodified. target_ratio=ratio is
+                        # threaded into the downstream technique call below, which performs the
+                        # ratio-achieving oversampling as its own single step and asserts the ratio itself.
+                        train_mask_sampled = train_mask.clone().to(train_mask.device)
+
                     # ========== F1 MODE ==========
                     if args.mode == 'f1':
                         if method == "intrinsic":
                             ap_score, y_pred_probs, y_true = intrinsic_features_with_predictions(
-                                ntw, train_mask_sampled, test_mask, n_layers_decoder=2, hidden_dim_decoder=16, 
-                                lr=args.lr, n_epochs_decoder=100, clip_norm=args.clip_norm
+                                ntw, train_mask_sampled, test_mask, n_layers_decoder=2, hidden_dim_decoder=16,
+                                lr=args.lr, n_epochs_decoder=100, clip_norm=args.clip_norm,
+                                sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "positional":
                             ap_score, y_pred_probs, y_true = positional_features_with_predictions(
-                                ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, 
-                                lr=args.lr, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, 
-                                ntw_name=ntw_name+"_train", clip_norm=args.clip_norm
+                                ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50,
+                                lr=args.lr, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16,
+                                ntw_name=ntw_name+"_train", clip_norm=args.clip_norm,
+                                sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "deepwalk":
                             ap_score, y_pred_probs, y_true = node2vec_features_with_predictions(
@@ -220,9 +234,10 @@ if __name__ == "__main__":
                                 )
                             else:
                                 ap_score, y_pred_probs, y_true = GNN_features_graphsmote_with_predictions(
-                                    ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_sampled, 
-                                    val_mask=val_mask, test_mask=test_mask, k_neighbors=5, random_state=42, sampling=sampling, 
-                                    patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', clip_norm=args.clip_norm
+                                    ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_sampled,
+                                    val_mask=val_mask, test_mask=test_mask, k_neighbors=5, random_state=42, sampling=sampling,
+                                    patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', clip_norm=args.clip_norm,
+                                    target_ratio=ratio, assert_tag=assert_tag
                                 )
                         
                         cutoff = np.percentile(y_pred_probs, 99)
@@ -234,14 +249,16 @@ if __name__ == "__main__":
                     else:
                         if method == "intrinsic":
                             ap_loss, f1_loss = intrinsic_features(
-                                ntw, train_mask_sampled, test_mask, n_layers_decoder=2, hidden_dim_decoder=16, 
-                                lr=args.lr, n_epochs_decoder=100, percentile_q=99, clip_norm=args.clip_norm
+                                ntw, train_mask_sampled, test_mask, n_layers_decoder=2, hidden_dim_decoder=16,
+                                lr=args.lr, n_epochs_decoder=100, percentile_q=99, clip_norm=args.clip_norm,
+                                sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "positional":
                             ap_loss, f1_loss = positional_features(
-                                ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, 
-                                lr=args.lr, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, 
-                                ntw_name=ntw_name+"_train", percentile_q=99, clip_norm=args.clip_norm
+                                ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50,
+                                lr=args.lr, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16,
+                                ntw_name=ntw_name+"_train", percentile_q=99, clip_norm=args.clip_norm,
+                                sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "deepwalk":
                             ap_loss, f1_loss = node2vec_features(
@@ -275,10 +292,10 @@ if __name__ == "__main__":
                                 )
                             else:
                                 ap_loss, f1_loss = GNN_features_graphsmote(
-                                    ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_sampled, 
-                                    val_mask=val_mask, test_mask=test_mask, k_neighbors=5, random_state=42, percentile_q=99, 
-                                    sampling=sampling, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', 
-                                    clip_norm=args.clip_norm
+                                    ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_sampled,
+                                    val_mask=val_mask, test_mask=test_mask, k_neighbors=5, random_state=42, percentile_q=99,
+                                    sampling=sampling, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap',
+                                    clip_norm=args.clip_norm, target_ratio=ratio, assert_tag=assert_tag
                                 )
                         results.append(f"AUC-PRC: {ap_loss}, F1: {f1_loss}")
 

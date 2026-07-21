@@ -48,8 +48,8 @@ class EarlyStopping:
         self.best_score = None
         self.early_stop = False
         
-        self.val_loss_min = np.Inf
-        self.val_ap_max = -np.Inf
+        self.val_loss_min = np.inf
+        self.val_ap_max = -np.inf
 
     def __call__(self, val_metric, model):
         checkpoint_dir = os.path.dirname(self.checkpoint_path)
@@ -221,7 +221,12 @@ def random_undersample_mask(mask, labels, target_ratio=1.0, random_state=None):
     if classes.size <= 1:
         return mask.clone() if is_torch and _torch is not None else mask_np
     minority_count = int(_np.min(counts))
-    desired_majority = int(_np.floor(minority_count * target_ratio))
+    majority_count = int(_np.max(counts))
+    if target_ratio is None:
+        desired_majority = majority_count
+    else:
+        desired_majority = int(_np.floor(minority_count * target_ratio))
+    desired_majority = min(desired_majority, majority_count)
     rnd = _np.random.RandomState(random_state)
     selected = []
     for cls, cnt in zip(classes, counts):
@@ -455,7 +460,25 @@ def save_results_TD(precision_dict, recall_dict, F1_dict, model_name):
     df.to_csv('res/'+model_name+'_TD.csv')
 
 
-def smote_mask(mask, features, labels, k_neighbors=5, random_state=None):
+def compute_smote_sampling_strategy(labels_masked, target_ratio):
+    """
+    Compute the SMOTE sampling_strategy dict to reach a target
+    majority:minority ratio by oversampling the minority class only.
+    Returns None if the current ratio already satisfies target_ratio.
+    """
+    unique, counts = np.unique(labels_masked, return_counts=True)
+    if unique.size < 2:
+        return None
+    minority_class = unique[np.argmin(counts)]
+    minority_count = int(np.min(counts))
+    majority_count = int(np.max(counts))
+    desired_minority_count = int(np.ceil(majority_count / target_ratio))
+    if desired_minority_count <= minority_count:
+        return None
+    return {minority_class: desired_minority_count}
+
+
+def smote_mask(mask, features, labels, k_neighbors=5, random_state=None, target_ratio=None):
     """ SMOTE applied within a mask. """
     is_torch_feat = isinstance(features, torch.Tensor)
     is_torch_labels = isinstance(labels, torch.Tensor)
@@ -497,7 +520,16 @@ def smote_mask(mask, features, labels, k_neighbors=5, random_state=None):
         expanded_mask = np.zeros(len(labels_np), dtype=bool)
         expanded_mask[:len(mask_np)] = mask_np
         return expanded_features, expanded_labels, expanded_mask
-    smote = SMOTE(k_neighbors=max(1, min(int(k_neighbors), minority_count - 1)), random_state=random_state)
+    sampling_strategy = 'auto'
+    if target_ratio is not None:
+        sampling_strategy = compute_smote_sampling_strategy(labels_masked, target_ratio)
+        if sampling_strategy is None:
+            expanded_features = features_np
+            expanded_labels = labels_np
+            expanded_mask = np.zeros(len(labels_np), dtype=bool)
+            expanded_mask[:len(mask_np)] = mask_np
+            return expanded_features, expanded_labels, expanded_mask
+    smote = SMOTE(sampling_strategy=sampling_strategy, k_neighbors=max(1, min(int(k_neighbors), minority_count - 1)), random_state=random_state)
     X_smote, y_smote = smote.fit_resample(features_masked, labels_masked)
     n_original = features_masked.shape[0]
     n_synthetic = X_smote.shape[0] - n_original
@@ -519,7 +551,7 @@ def smote_mask(mask, features, labels, k_neighbors=5, random_state=None):
     return expanded_features, expanded_labels, expanded_mask
 
 
-def reweighted_graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, similarity_metric='cosine', random_state=None):
+def reweighted_graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, similarity_metric='cosine', random_state=None, target_ratio=None):
     is_torch_feat = isinstance(features, torch.Tensor)
     is_torch_labels = isinstance(labels, torch.Tensor)
     is_torch_mask = isinstance(mask, torch.Tensor)
@@ -598,7 +630,26 @@ def reweighted_graph_smote_mask(mask, features, labels, edge_index, k_neighbors=
             expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
             expanded_edge_weights = torch.from_numpy(expanded_edge_weights).to(edge_index.device)
         return expanded_features, expanded_labels, expanded_mask, expanded_edge_index, expanded_edge_weights
-    smote = SMOTE(k_neighbors=max(1, min(int(k_neighbors), features_masked.shape[0] - 1)), random_state=random_state)
+    sampling_strategy = 'auto'
+    if target_ratio is not None:
+        sampling_strategy = compute_smote_sampling_strategy(labels_masked, target_ratio)
+        if sampling_strategy is None:
+            expanded_features = features_np
+            expanded_labels = labels_np
+            expanded_mask = mask_np
+            expanded_edge_index = edge_index_np
+            expanded_edge_weights = np.ones(max(edge_index_np.shape[1], 0), dtype=float) if edge_index_np.size else np.array([], dtype=float)
+            if is_torch_feat:
+                expanded_features = torch.from_numpy(expanded_features).to(features.dtype).to(features.device)
+            if is_torch_labels:
+                expanded_labels = torch.from_numpy(expanded_labels).to(labels.device)
+            if is_torch_mask:
+                expanded_mask = torch.from_numpy(expanded_mask).to(mask.device)
+            if is_torch_edge:
+                expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
+                expanded_edge_weights = torch.from_numpy(expanded_edge_weights).to(edge_index.device)
+            return expanded_features, expanded_labels, expanded_mask, expanded_edge_index, expanded_edge_weights
+    smote = SMOTE(sampling_strategy=sampling_strategy, k_neighbors=max(1, min(int(k_neighbors), features_masked.shape[0] - 1)), random_state=random_state)
     X_smote, y_smote = smote.fit_resample(features_masked, labels_masked)
     n_original = features_masked.shape[0]
     n_synthetic = X_smote.shape[0] - n_original
@@ -668,7 +719,7 @@ def reweighted_graph_smote_mask(mask, features, labels, edge_index, k_neighbors=
     return expanded_features, expanded_labels, expanded_mask, expanded_edge_index, expanded_edge_weights
 
 
-def graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, similarity_metric='cosine', random_state=None):
+def graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, similarity_metric='cosine', random_state=None, target_ratio=None):
     is_torch_feat = isinstance(features, torch.Tensor)
     is_torch_labels = isinstance(labels, torch.Tensor)
     is_torch_mask = isinstance(mask, torch.Tensor)
@@ -708,7 +759,24 @@ def graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, similari
     features_masked = features_np[idx_mask]
     features_masked = np.nan_to_num(features_masked, nan=0.0, posinf=0.0, neginf=0.0)
     labels_masked = labels_np[idx_mask]
-    smote = SMOTE(k_neighbors=max(1, min(int(k_neighbors), max(1, features_masked.shape[0] - 1))), random_state=random_state)
+    sampling_strategy = 'auto'
+    if target_ratio is not None:
+        sampling_strategy = compute_smote_sampling_strategy(labels_masked, target_ratio)
+        if sampling_strategy is None:
+            expanded_features = features_np
+            expanded_labels = labels_np
+            expanded_mask = mask_np
+            expanded_edge_index = edge_index_np
+            if is_torch_feat:
+                expanded_features = torch.from_numpy(expanded_features).to(features.dtype).to(features.device)
+            if is_torch_labels:
+                expanded_labels = torch.from_numpy(expanded_labels).to(labels.device)
+            if is_torch_mask:
+                expanded_mask = torch.from_numpy(expanded_mask).to(mask.device)
+            if is_torch_edge:
+                expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
+            return expanded_features, expanded_labels, expanded_mask, expanded_edge_index
+    smote = SMOTE(sampling_strategy=sampling_strategy, k_neighbors=max(1, min(int(k_neighbors), max(1, features_masked.shape[0] - 1))), random_state=random_state)
     X_smote, y_smote = smote.fit_resample(features_masked, labels_masked)
     n_original = features_masked.shape[0]
     n_synthetic = X_smote.shape[0] - n_original
@@ -750,7 +818,7 @@ def graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, similari
     return expanded_features, expanded_labels, expanded_mask, expanded_edge_index
 
 
-def graph_ensemble_smote_mask(mask, features, labels, edge_index, k_neighbors=5, random_state=None):
+def graph_ensemble_smote_mask(mask, features, labels, edge_index, k_neighbors=5, random_state=None, target_ratio=None):
     is_torch_feat = isinstance(features, torch.Tensor)
     is_torch_labels = isinstance(labels, torch.Tensor)
     is_torch_mask = isinstance(mask, torch.Tensor)
@@ -820,7 +888,24 @@ def graph_ensemble_smote_mask(mask, features, labels, edge_index, k_neighbors=5,
         if is_torch_edge:
             expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
         return expanded_features, expanded_labels, expanded_mask, expanded_edge_index
-    smote = SMOTE(k_neighbors=max(1, min(int(k_neighbors), features_masked.shape[0] - 1)), random_state=random_state)
+    sampling_strategy = 'auto'
+    if target_ratio is not None:
+        sampling_strategy = compute_smote_sampling_strategy(labels_masked, target_ratio)
+        if sampling_strategy is None:
+            expanded_features = features_np
+            expanded_labels = labels_np
+            expanded_mask = mask_np
+            expanded_edge_index = edge_index_np
+            if is_torch_feat:
+                expanded_features = torch.from_numpy(expanded_features).to(features.dtype).to(features.device)
+            if is_torch_labels:
+                expanded_labels = torch.from_numpy(expanded_labels).to(labels.device)
+            if is_torch_mask:
+                expanded_mask = torch.from_numpy(expanded_mask).to(mask.device)
+            if is_torch_edge:
+                expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
+            return expanded_features, expanded_labels, expanded_mask, expanded_edge_index
+    smote = SMOTE(sampling_strategy=sampling_strategy, k_neighbors=max(1, min(int(k_neighbors), features_masked.shape[0] - 1)), random_state=random_state)
     X_smote, y_smote = smote.fit_resample(features_masked, labels_masked)
     X_smote = np.nan_to_num(X_smote, nan=0.0, posinf=1e5, neginf=-1e5)
     n_original = features_masked.shape[0]
@@ -891,7 +976,10 @@ def adjust_mask_to_ratio(mask, labels, target_ratio, random_state=None):
     majority_class = unique_classes[np.argmax(counts)]
     minority_count = np.min(counts)
     majority_count = np.max(counts)
-    new_majority_count = int(np.round(target_ratio * minority_count))
+    if target_ratio is None:
+        new_majority_count = majority_count
+    else:
+        new_majority_count = int(np.round(target_ratio * minority_count))
     new_majority_count = min(new_majority_count, majority_count)
     idx_minority = idx_mask[np.where(labels_in_mask == minority_class)[0]]
     idx_majority = idx_mask[np.where(labels_in_mask == majority_class)[0]]
@@ -903,3 +991,17 @@ def adjust_mask_to_ratio(mask, labels, target_ratio, random_state=None):
     if is_torch:
         return torch.from_numpy(new_mask).to(mask.device), majority_count, minority_count, new_majority_count
     return new_mask, majority_count, minority_count, new_majority_count
+
+
+def assert_ratio_achieved(labels_after, mask_after, target_ratio, tol=0.15, tag=""):
+    labels_in_mask = np.asarray(labels_after)[np.asarray(mask_after).astype(bool)]
+    unique, counts = np.unique(labels_in_mask, return_counts=True)
+    if unique.size < 2:
+        print(f"[ratio-check][{tag}] skipped (single class present)")
+        return
+    achieved = np.max(counts) / np.min(counts)
+    print(f"[ratio-check][{tag}] target={target_ratio} achieved={achieved:.3f}")
+    if target_ratio is not None:
+        assert abs(achieved - target_ratio) <= tol * target_ratio, (
+            f"Ratio drift detected for {tag}: target={target_ratio}, achieved={achieved:.3f}"
+        )

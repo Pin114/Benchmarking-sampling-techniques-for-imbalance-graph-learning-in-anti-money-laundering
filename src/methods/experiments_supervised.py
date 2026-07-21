@@ -9,10 +9,11 @@ from src.methods.utils.GNN import *
 from src.utils.Network import *
 from src.methods.utils.decoder import *
 from src.methods.evaluation import (
-    smote_mask, 
-    graph_smote_mask, 
-    reweighted_graph_smote_mask, 
-    graph_ensemble_smote_mask, 
+    smote_mask,
+    graph_smote_mask,
+    reweighted_graph_smote_mask,
+    graph_ensemble_smote_mask,
+    assert_ratio_achieved,
     EarlyStopping
 )
 from sklearn.metrics import average_precision_score
@@ -20,12 +21,23 @@ import os
 import numpy as np
 
 def intrinsic_features(
-    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder, percentile_q=99
+    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder, percentile_q=99,
+    sampling="none", target_ratio=None, k_neighbors=5, random_state=None, assert_tag=""
 ):
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     X_train, y_train, X_test, y_test = ntw.get_train_test_split_intrinsic(train_mask, test_mask, device=device_decoder)
+    if sampling == "smote" and target_ratio is not None:
+        train_mask_np = train_mask.cpu().numpy().astype(bool) if isinstance(train_mask, torch.Tensor) else np.array(train_mask).astype(bool)
+        X_full = ntw.get_features().values
+        y_full = ntw.df_features['class'].values
+        expanded_features, expanded_labels, expanded_mask = smote_mask(
+            train_mask_np, X_full, y_full, k_neighbors=k_neighbors, random_state=random_state, target_ratio=target_ratio
+        )
+        assert_ratio_achieved(expanded_labels, expanded_mask, target_ratio, tag=assert_tag)
+        X_train = torch.tensor(expanded_features[expanded_mask], dtype=torch.float32).to(device_decoder)
+        y_train = torch.tensor(expanded_labels[expanded_mask], dtype=torch.long).to(device_decoder)
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
@@ -47,12 +59,23 @@ def intrinsic_features(
     return (ap_score, f1)
 
 def intrinsic_features_with_predictions(
-    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder
+    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder,
+    sampling="none", target_ratio=None, k_neighbors=5, random_state=None, assert_tag=""
 ):
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     X_train, y_train, X_test, y_test = ntw.get_train_test_split_intrinsic(train_mask, test_mask, device=device_decoder)
+    if sampling == "smote" and target_ratio is not None:
+        train_mask_np = train_mask.cpu().numpy().astype(bool) if isinstance(train_mask, torch.Tensor) else np.array(train_mask).astype(bool)
+        X_full = ntw.get_features().values
+        y_full = ntw.df_features['class'].values
+        expanded_features, expanded_labels, expanded_mask = smote_mask(
+            train_mask_np, X_full, y_full, k_neighbors=k_neighbors, random_state=random_state, target_ratio=target_ratio
+        )
+        assert_ratio_achieved(expanded_labels, expanded_mask, target_ratio, tag=assert_tag)
+        X_train = torch.tensor(expanded_features[expanded_mask], dtype=torch.float32).to(device_decoder)
+        y_train = torch.tensor(expanded_labels[expanded_mask], dtype=torch.long).to(device_decoder)
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
@@ -72,7 +95,8 @@ def intrinsic_features_with_predictions(
 def positional_features(
     ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float,
     fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2,
-    hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, percentile_q: int = 99
+    hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, percentile_q: int = 99,
+    sampling: str = "none", target_ratio: float = None, k_neighbors: int = 5, random_state: int = None, assert_tag: str = ""
 ):
     print("intrinsic and summary: ")
     X = ntw.get_features(full=True)
@@ -90,10 +114,21 @@ def positional_features(
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    features_df_train = features_df[train_mask.numpy()]
-    x_train_features = features_df_train.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    x_train = torch.tensor(x_train_features, dtype=torch.float32).to(device_decoder)
-    y_train = torch.tensor(features_df_train["fraud"].values, dtype=torch.long).to(device_decoder)
+    if sampling == "smote" and target_ratio is not None:
+        train_mask_np = train_mask.numpy().astype(bool) if isinstance(train_mask, torch.Tensor) else np.array(train_mask).astype(bool)
+        x_all_features = features_df.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+        y_all = features_df["fraud"].values
+        expanded_features, expanded_labels, expanded_mask = smote_mask(
+            train_mask_np, x_all_features, y_all, k_neighbors=k_neighbors, random_state=random_state, target_ratio=target_ratio
+        )
+        assert_ratio_achieved(expanded_labels, expanded_mask, target_ratio, tag=assert_tag)
+        x_train = torch.tensor(expanded_features[expanded_mask], dtype=torch.float32).to(device_decoder)
+        y_train = torch.tensor(expanded_labels[expanded_mask], dtype=torch.long).to(device_decoder)
+    else:
+        features_df_train = features_df[train_mask.numpy()]
+        x_train_features = features_df_train.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+        x_train = torch.tensor(x_train_features, dtype=torch.float32).to(device_decoder)
+        y_train = torch.tensor(features_df_train["fraud"].values, dtype=torch.long).to(device_decoder)
     features_df_test = features_df[test_mask.numpy()]
     x_test_features = features_df_test.drop(["PSP", "fraud"], axis=1, errors='ignore').values
     x_test = torch.tensor(x_test_features, dtype=torch.float32).to(device_decoder)
@@ -121,7 +156,8 @@ def positional_features(
 def positional_features_with_predictions(
     ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float,
     fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2,
-    hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False
+    hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False,
+    sampling: str = "none", target_ratio: float = None, k_neighbors: int = 5, random_state: int = None, assert_tag: str = ""
 ):
     print("intrinsic and summary: ")
     X = ntw.get_features(full=True)
@@ -139,10 +175,21 @@ def positional_features_with_predictions(
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    features_df_train = features_df[train_mask.numpy()]
-    x_train_features = features_df_train.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    x_train = torch.tensor(x_train_features, dtype=torch.float32).to(device_decoder)
-    y_train = torch.tensor(features_df_train["fraud"].values, dtype=torch.long).to(device_decoder)
+    if sampling == "smote" and target_ratio is not None:
+        train_mask_np = train_mask.numpy().astype(bool) if isinstance(train_mask, torch.Tensor) else np.array(train_mask).astype(bool)
+        x_all_features = features_df.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+        y_all = features_df["fraud"].values
+        expanded_features, expanded_labels, expanded_mask = smote_mask(
+            train_mask_np, x_all_features, y_all, k_neighbors=k_neighbors, random_state=random_state, target_ratio=target_ratio
+        )
+        assert_ratio_achieved(expanded_labels, expanded_mask, target_ratio, tag=assert_tag)
+        x_train = torch.tensor(expanded_features[expanded_mask], dtype=torch.float32).to(device_decoder)
+        y_train = torch.tensor(expanded_labels[expanded_mask], dtype=torch.long).to(device_decoder)
+    else:
+        features_df_train = features_df[train_mask.numpy()]
+        x_train_features = features_df_train.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+        x_train = torch.tensor(x_train_features, dtype=torch.float32).to(device_decoder)
+        y_train = torch.tensor(features_df_train["fraud"].values, dtype=torch.long).to(device_decoder)
     features_df_test = features_df[test_mask.numpy()]
     x_test_features = features_df_test.drop(["PSP", "fraud"], axis=1, errors='ignore').values
     x_test = torch.tensor(x_test_features, dtype=torch.float32).to(device_decoder)
@@ -526,7 +573,8 @@ def GNN_features_graphsmote(
     val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
     val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
     k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote",
-    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap'
+    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap',
+    target_ratio: float = None, assert_tag: str = ""
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -550,18 +598,24 @@ def GNN_features_graphsmote(
 
     if sampling == "reweighted_graph_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state,
+            target_ratio=target_ratio
         )
     elif sampling == "graph_ensemble_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_ensemble_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state,
+            target_ratio=target_ratio
         )
         edge_attr_smote = None
     else: # "graph_smote"
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state,
+            target_ratio=target_ratio
         )
         edge_attr_smote = None
+
+    if target_ratio is not None:
+        assert_ratio_achieved(y_smote, train_mask_smote, target_ratio, tag=assert_tag)
 
     if isinstance(y_smote, torch.Tensor):
         valid_labels = torch.isin(y_smote, torch.tensor([0, 1], device=y_smote.device))
@@ -667,7 +721,8 @@ def GNN_features_graphsmote_with_predictions(
     val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
     val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
     k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote",
-    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap'
+    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap',
+    target_ratio: float = None, assert_tag: str = ""
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -691,18 +746,24 @@ def GNN_features_graphsmote_with_predictions(
 
     if sampling == "reweighted_graph_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state,
+            target_ratio=target_ratio
         )
     elif sampling == "graph_ensemble_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_ensemble_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state,
+            target_ratio=target_ratio
         )
         edge_attr_smote = None
     else: # "graph_smote"
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, random_state=random_state,
+            target_ratio=target_ratio
         )
         edge_attr_smote = None
+
+    if target_ratio is not None:
+        assert_ratio_achieved(y_smote, train_mask_smote, target_ratio, tag=assert_tag)
 
     if isinstance(y_smote, torch.Tensor):
         valid_labels = torch.isin(y_smote, torch.tensor([0, 1], device=y_smote.device))
