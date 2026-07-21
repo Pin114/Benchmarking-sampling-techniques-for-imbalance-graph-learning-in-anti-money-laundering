@@ -116,7 +116,6 @@ pip install torch torch-geometric pandas numpy scikit-learn imbalanced-learn net
    ```
    This compiles all seeds and average configurations into:
    * `res/ratio_comparison_tables_auc_prc.md`
-   * `res/ratio_comparison_tables_f1_90.md`
    * `res/ratio_comparison_tables_f1_99.md`
 
 ---
