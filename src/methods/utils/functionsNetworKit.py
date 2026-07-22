@@ -4,9 +4,14 @@ import pandas as pd
 def assign_att(u, att, val):
     att[u] = val
 
-def betweenness_nx(G_nx):
+def betweenness_nx(G_nx, k=500, seed=42):
     print("Calculating betweenness...")
-    betweenness_full = nx.betweenness_centrality(G_nx, normalized=True)
+    # Exact betweenness_centrality is O(V*E); infeasible on large graphs (e.g. ~86h
+    # measured on a 500K-node/315K-edge graph). k samples source nodes for a
+    # standard approximation instead of computing shortest paths from every node.
+    num_nodes = G_nx.number_of_nodes()
+    k_effective = min(k, num_nodes) if k is not None else None
+    betweenness_full = nx.betweenness_centrality(G_nx, k=k_effective, seed=seed, normalized=True)
     print("Done")
     
     psp_list = list(G_nx.nodes())
@@ -46,7 +51,7 @@ def features_nx_calculations(G_nx):
     return features_df
 
 def features_nx(G_nx, ntw_name):
-    location = 'res/' + ntw_name + '_features_nx.csv'
+    location = 'res/' + ntw_name + '_features_nk.csv'
     try:
         features_df = pd.read_csv(location, index_col=0)
     except FileNotFoundError:

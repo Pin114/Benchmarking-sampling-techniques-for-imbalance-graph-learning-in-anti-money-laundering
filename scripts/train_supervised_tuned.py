@@ -200,9 +200,11 @@ if __name__ == "__main__":
                                 sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "positional":
+                            train_mask_np = train_mask_sampled.cpu().numpy().astype(bool)
+                            fraud_dict_train = {k: v for k, v in fraud_dict.items() if train_mask_np[k]}
                             ap_score, y_pred_probs, y_true = positional_features_with_predictions(
                                 ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50,
-                                lr=args.lr, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16,
+                                lr=args.lr, fraud_dict_train=fraud_dict_train, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16,
                                 ntw_name=ntw_name+"_train", clip_norm=args.clip_norm,
                                 sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
@@ -258,9 +260,11 @@ if __name__ == "__main__":
                                 sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "positional":
+                            train_mask_np = train_mask_sampled.cpu().numpy().astype(bool)
+                            fraud_dict_train = {k: v for k, v in fraud_dict.items() if train_mask_np[k]}
                             ap_loss, f1_loss = positional_features(
                                 ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50,
-                                lr=args.lr, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16,
+                                lr=args.lr, fraud_dict_train=fraud_dict_train, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16,
                                 ntw_name=ntw_name+"_train", percentile_q=99, clip_norm=args.clip_norm,
                                 sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )

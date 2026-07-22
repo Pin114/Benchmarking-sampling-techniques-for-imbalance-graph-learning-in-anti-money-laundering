@@ -58,6 +58,12 @@ if __name__ == "__main__":
         default='hi_small',
         help='Dataset/configuration to run'
     )
+    parser.add_argument(
+        '--methods', nargs='+',
+        choices=['intrinsic', 'positional', 'deepwalk', 'node2vec', 'gcn', 'sage', 'gat', 'gin'],
+        default=None,
+        help='Restrict to a subset of methods (default: all 8)'
+    )
     args = parser.parse_args()
     set_seed(args.seed)
 
@@ -78,7 +84,7 @@ if __name__ == "__main__":
 
     train_mask, val_mask, test_mask = ntw.get_masks()
 
-    to_train = ["intrinsic", "positional", "deepwalk", "node2vec", "gcn", "sage", "gat", "gin"]
+    to_train = args.methods if args.methods is not None else ["intrinsic", "positional", "deepwalk", "node2vec", "gcn", "sage", "gat", "gin"]
     # NOTE: "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote" are intentionally
     # NOT offered for "deepwalk"/"node2vec". Those techniques oversample by interpolating in
     # FEATURE space (SMOTE-style), but DeepWalk/Node2Vec embeddings are derived purely from
@@ -192,8 +198,10 @@ if __name__ == "__main__":
                                 sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "positional":
+                            train_mask_np = train_mask_sampled.cpu().numpy().astype(bool)
+                            fraud_dict_train = {k: v for k, v in fraud_dict.items() if train_mask_np[k]}
                             ap_score, y_pred_probs, y_true = positional_features_with_predictions(
-                                ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=0.05, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, ntw_name=ntw_name+"_train",
+                                ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=0.05, fraud_dict_train=fraud_dict_train, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, ntw_name=ntw_name+"_train",
                                 sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "deepwalk":
@@ -240,8 +248,10 @@ if __name__ == "__main__":
                                 sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "positional":
+                            train_mask_np = train_mask_sampled.cpu().numpy().astype(bool)
+                            fraud_dict_train = {k: v for k, v in fraud_dict.items() if train_mask_np[k]}
                             ap_loss, f1_loss = positional_features(
-                                ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=0.05, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, ntw_name=ntw_name+"_train", percentile_q=99,
+                                ntw, train_mask_sampled, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=0.05, fraud_dict_train=fraud_dict_train, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, ntw_name=ntw_name+"_train", percentile_q=99,
                                 sampling=sampling, target_ratio=ratio, k_neighbors=5, random_state=42, assert_tag=assert_tag
                             )
                         elif method == "deepwalk":
