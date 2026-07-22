@@ -1,0 +1,807 @@
+# Ablation Study & Parameter Tuning Comparison (AUC-PRC)
+
+This table contrasts the **Baseline (LR=0.05, No Clip)** vs **Tuned (LR=0.001, Gradient Clip)** settings across ratios.
+
+## Dataset: ELLIPTIC
+
+### Comparison under Original
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.5779892715846862 | N/A |
+| **INTRINSIC** | RUS | - | 0.5745925025870516 | N/A |
+| **INTRINSIC** | SMOTE | - | 0.5845545339008216 | N/A |
+| **POSITIONAL** | NONE | - | 0.073853 ± 0.000000 | N/A |
+| **POSITIONAL** | RUS | - | 0.073247 ± 0.000000 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.078635 ± 0.000000 | N/A |
+| **DEEPWALK** | NONE | - | 0.14310042178079424 | N/A |
+| **DEEPWALK** | RUS | - | 0.12319650726843275 | N/A |
+| **DEEPWALK** | GRAPH_SMOTE | - | 0.1210329015332064 | N/A |
+| **DEEPWALK** | GRAPH_ENSEMBLE_SMOTE | - | 0.12562381211840878 | N/A |
+| **DEEPWALK** | REWEIGHTED_GRAPH_SMOTE | - | 0.09490353413468668 | N/A |
+| **NODE2VEC** | NONE | - | 0.1261799546077204 | N/A |
+| **NODE2VEC** | RUS | - | 0.16618107855258313 | N/A |
+| **NODE2VEC** | GRAPH_SMOTE | - | 0.1268821676751514 | N/A |
+| **NODE2VEC** | GRAPH_ENSEMBLE_SMOTE | - | 0.18132346546019792 | N/A |
+| **NODE2VEC** | REWEIGHTED_GRAPH_SMOTE | - | 0.15045498141136435 | N/A |
+| **GCN** | NONE | - | 0.16909287134186218 | N/A |
+| **GCN** | RUS | - | 0.19511031660380507 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.19814523330815692 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.20709726728906666 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.211631818834165 | N/A |
+| **SAGE** | NONE | - | 0.3919423871589677 | N/A |
+| **SAGE** | RUS | - | 0.4152928547099494 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.2288679220146056 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.2642306663077513 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.24331561011202874 | N/A |
+| **GAT** | NONE | - | 0.4992810240156984 | N/A |
+| **GAT** | RUS | - | 0.48705785904202414 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.09074261389594758 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.08567781824745788 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.3382610077593169 | N/A |
+| **GIN** | NONE | - | 0.16302983273026528 | N/A |
+| **GIN** | RUS | - | 0.29384895160054214 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.09511567243583387 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.06786372498362792 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.09553540106810152 | N/A |
+
+
+### Comparison under Ratio 1:100
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.5821597756413965 | N/A |
+| **INTRINSIC** | RUS | - | 0.5910569948736352 | N/A |
+| **INTRINSIC** | SMOTE | - | 0.5813351330520701 | N/A |
+| **POSITIONAL** | NONE | - | 0.04819535115291119 | N/A |
+| **POSITIONAL** | RUS | - | 0.07496006813322956 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.04551031116987769 | N/A |
+| **DEEPWALK** | NONE | - | 0.13248983907637535 | N/A |
+| **DEEPWALK** | RUS | - | 0.09454741528988117 | N/A |
+| **DEEPWALK** | GRAPH_SMOTE | - | 0.1341854041197773 | N/A |
+| **DEEPWALK** | GRAPH_ENSEMBLE_SMOTE | - | 0.14689647833136033 | N/A |
+| **DEEPWALK** | REWEIGHTED_GRAPH_SMOTE | - | 0.0930259790496814 | N/A |
+| **NODE2VEC** | NONE | - | 0.1967103792234061 | N/A |
+| **NODE2VEC** | RUS | - | 0.1750507017694699 | N/A |
+| **NODE2VEC** | GRAPH_SMOTE | - | 0.08192638001575715 | N/A |
+| **NODE2VEC** | GRAPH_ENSEMBLE_SMOTE | - | 0.14390204283179361 | N/A |
+| **NODE2VEC** | REWEIGHTED_GRAPH_SMOTE | - | 0.11008102668672477 | N/A |
+| **GCN** | NONE | - | 0.22667440844210818 | N/A |
+| **GCN** | RUS | - | 0.2589719537199924 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.20801403279991892 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.2076837848009776 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.20688576805258513 | N/A |
+| **SAGE** | NONE | - | 0.3291667577431973 | N/A |
+| **SAGE** | RUS | - | 0.33634041467355713 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.45057147815314513 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.4591930403526589 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.43954856447998114 | N/A |
+| **GAT** | NONE | - | 0.4895128629646638 | N/A |
+| **GAT** | RUS | - | 0.47444352285087954 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.48646782487443185 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.43722218050651357 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.4801138444683129 | N/A |
+| **GIN** | NONE | - | 0.1151519487387255 | N/A |
+| **GIN** | RUS | - | 0.25464431353315403 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.15058445127537384 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.16407700378598428 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.12425970597539986 | N/A |
+
+
+### Comparison under Ratio 1:10
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.5948959989687286 | N/A |
+| **INTRINSIC** | RUS | - | 0.5895156225014073 | N/A |
+| **INTRINSIC** | SMOTE | - | 0.5892735634756576 | N/A |
+| **POSITIONAL** | NONE | - | 0.07387196247870693 | N/A |
+| **POSITIONAL** | RUS | - | 0.07189192189424662 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.07550287584144416 | N/A |
+| **DEEPWALK** | NONE | - | 0.13355647321558578 | N/A |
+| **DEEPWALK** | RUS | - | 0.17478900399253472 | N/A |
+| **DEEPWALK** | GRAPH_SMOTE | - | 0.16476457916939669 | N/A |
+| **DEEPWALK** | GRAPH_ENSEMBLE_SMOTE | - | 0.18921576521673444 | N/A |
+| **DEEPWALK** | REWEIGHTED_GRAPH_SMOTE | - | 0.13697682793692584 | N/A |
+| **NODE2VEC** | NONE | - | 0.19528205564733195 | N/A |
+| **NODE2VEC** | RUS | - | 0.16359940039826049 | N/A |
+| **NODE2VEC** | GRAPH_SMOTE | - | 0.13561896128718903 | N/A |
+| **NODE2VEC** | GRAPH_ENSEMBLE_SMOTE | - | 0.2357420531551016 | N/A |
+| **NODE2VEC** | REWEIGHTED_GRAPH_SMOTE | - | 0.0901725492464592 | N/A |
+| **GCN** | NONE | - | 0.20277298998081317 | N/A |
+| **GCN** | RUS | - | 0.19844807872520456 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.1729500075000118 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.21667069961684993 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.1923605131497355 | N/A |
+| **SAGE** | NONE | - | 0.3894618868562352 | N/A |
+| **SAGE** | RUS | - | 0.4323169699856987 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.44592982843258144 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.29816406508751314 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.41549450524110093 | N/A |
+| **GAT** | NONE | - | 0.45863565189440725 | N/A |
+| **GAT** | RUS | - | 0.4242038863798483 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.46270759504479936 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.40008424771898027 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.49389754448573037 | N/A |
+| **GIN** | NONE | - | 0.17806978000231719 | N/A |
+| **GIN** | RUS | - | 0.23413785864182468 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.33859250451737083 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.14135722276668655 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.30663041411625785 | N/A |
+
+
+### Comparison under Ratio 1:2
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.5976509282616469 | N/A |
+| **INTRINSIC** | RUS | - | 0.5784269885797563 | N/A |
+| **POSITIONAL** | NONE | - | 0.07459646373672582 | N/A |
+| **POSITIONAL** | RUS | - | 0.07397366869278504 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.07263251985475945 | N/A |
+| **DEEPWALK** | NONE | - | 0.13450398593592133 | N/A |
+| **DEEPWALK** | RUS | - | 0.18210744216893174 | N/A |
+| **NODE2VEC** | NONE | - | 0.09992018581246921 | N/A |
+| **NODE2VEC** | RUS | - | 0.17128353726800818 | N/A |
+| **GCN** | NONE | - | 0.21239392552623781 | N/A |
+| **GCN** | RUS | - | 0.21849288642794124 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.19316146589600372 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.1897530790266121 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.20827936235246564 | N/A |
+| **SAGE** | NONE | - | 0.3321533071052145 | N/A |
+| **SAGE** | RUS | - | 0.3674266285425326 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.31272220951368795 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.26139996554638956 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.27437401254044563 | N/A |
+| **GAT** | NONE | - | 0.496163237543036 | N/A |
+| **GAT** | RUS | - | 0.5023747295028449 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.2484507543080927 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.38877151217119965 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.37583421744606843 | N/A |
+| **GIN** | NONE | - | 0.15774004893983648 | N/A |
+| **GIN** | RUS | - | 0.28822237394792405 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.12489767245701791 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.06605725206395223 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.06328460763694163 | N/A |
+
+
+### Comparison under Ratio 1:1
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.5889383019709105 | N/A |
+| **INTRINSIC** | RUS | - | 0.588505551024867 | N/A |
+| **POSITIONAL** | NONE | - | 0.08307334320096003 | N/A |
+| **POSITIONAL** | RUS | - | 0.04732713278413208 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.07366067239068447 | N/A |
+| **DEEPWALK** | NONE | - | 0.12545001992971455 | N/A |
+| **DEEPWALK** | RUS | - | 0.1517373304090146 | N/A |
+| **NODE2VEC** | NONE | - | 0.15727296908235314 | N/A |
+| **NODE2VEC** | RUS | - | 0.12132351590457152 | N/A |
+| **GCN** | NONE | - | 0.2930552751146013 | N/A |
+| **GCN** | RUS | - | 0.14431246756528338 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.177142229170633 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.18803901719778413 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.19614854794588604 | N/A |
+| **SAGE** | NONE | - | 0.4057493967038397 | N/A |
+| **SAGE** | RUS | - | 0.4597703554478657 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.2468748999353618 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.2771230969567675 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.24245079867678204 | N/A |
+| **GAT** | NONE | - | 0.4654791368069918 | N/A |
+| **GAT** | RUS | - | 0.47448764253761555 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.16397888144504158 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.10251788217462306 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.3122761482023509 | N/A |
+| **GIN** | NONE | - | 0.23859618363462534 | N/A |
+| **GIN** | RUS | - | 0.3563042948550864 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.07639719099840203 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.0719655523801219 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.06547100017946716 | N/A |
+
+
+## Dataset: IBM HI-MEDIUM
+
+### Comparison under Original
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.00123 | N/A |
+| **INTRINSIC** | RUS | - | 0.00123 | N/A |
+| **INTRINSIC** | SMOTE | - | 0.00123 | N/A |
+| **POSITIONAL** | NONE | - | 0.001249300269918694 | N/A |
+| **POSITIONAL** | RUS | - | 0.0012487247376398636 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.0012528725290699278 | N/A |
+| **DEEPWALK** | NONE | - | 0.0012331243360390245 | N/A |
+| **DEEPWALK** | RUS | - | 0.0010083568799563296 | N/A |
+| **DEEPWALK** | GRAPH_SMOTE | - | 0.0014063078317603282 | N/A |
+| **DEEPWALK** | GRAPH_ENSEMBLE_SMOTE | - | 0.0010927650830761578 | N/A |
+| **DEEPWALK** | REWEIGHTED_GRAPH_SMOTE | - | 0.0012111445331767616 | N/A |
+| **NODE2VEC** | NONE | - | 0.0010893100401751265 | N/A |
+| **NODE2VEC** | RUS | - | 0.0014101061589199897 | N/A |
+| **NODE2VEC** | GRAPH_SMOTE | - | 0.0011058396596967432 | N/A |
+| **NODE2VEC** | GRAPH_ENSEMBLE_SMOTE | - | 0.0012115749492306567 | N/A |
+| **NODE2VEC** | REWEIGHTED_GRAPH_SMOTE | - | 0.0011340187790759636 | N/A |
+| **GCN** | NONE | - | 0.00123 | N/A |
+| **GCN** | RUS | - | 0.00123 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+| **SAGE** | NONE | - | 0.00123 | N/A |
+| **SAGE** | RUS | - | 0.00123 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GAT** | NONE | - | 0.00123 | N/A |
+| **GAT** | RUS | - | 0.00123 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GIN** | NONE | - | 0.00123 | N/A |
+| **GIN** | RUS | - | 0.00123 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+
+
+### Comparison under Ratio 1:100
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.00123 | N/A |
+| **INTRINSIC** | RUS | - | 0.00123 | N/A |
+| **POSITIONAL** | NONE | - | 0.0012508878505373276 | N/A |
+| **POSITIONAL** | RUS | - | 0.0012443991047048784 | N/A |
+| **DEEPWALK** | NONE | - | 0.0012357271944836293 | N/A |
+| **DEEPWALK** | RUS | - | 0.0011213088959243745 | N/A |
+| **NODE2VEC** | NONE | - | 0.0010351842106184038 | N/A |
+| **NODE2VEC** | RUS | - | 0.0010081503397594011 | N/A |
+| **GCN** | NONE | - | 0.00123 | N/A |
+| **GCN** | RUS | - | 0.00123 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+| **SAGE** | NONE | - | 0.00123 | N/A |
+| **SAGE** | RUS | - | 0.00123 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GAT** | NONE | - | 0.00123 | N/A |
+| **GAT** | RUS | - | 0.00123 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GIN** | NONE | - | 0.00123 | N/A |
+| **GIN** | RUS | - | 0.00123 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+
+
+### Comparison under Ratio 1:10
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.00123 | N/A |
+| **INTRINSIC** | RUS | - | 0.00123 | N/A |
+| **POSITIONAL** | NONE | - | 0.001246779927581358 | N/A |
+| **POSITIONAL** | RUS | - | 0.001249281723513076 | N/A |
+| **DEEPWALK** | NONE | - | 0.0011225967966430612 | N/A |
+| **DEEPWALK** | RUS | - | 0.0011959402589277824 | N/A |
+| **NODE2VEC** | NONE | - | 0.001195842454618047 | N/A |
+| **NODE2VEC** | RUS | - | 0.0011442690930596592 | N/A |
+| **GCN** | NONE | - | 0.00123 | N/A |
+| **GCN** | RUS | - | 0.00123 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+| **SAGE** | NONE | - | 0.00123 | N/A |
+| **SAGE** | RUS | - | 0.00123 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GAT** | NONE | - | 0.00123 | N/A |
+| **GAT** | RUS | - | 0.00123 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GIN** | NONE | - | 0.00123 | N/A |
+| **GIN** | RUS | - | 0.00123 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.00123 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00123 | N/A |
+
+
+### Comparison under Ratio 1:2
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+
+
+### Comparison under Ratio 1:1
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+
+
+## Dataset: IBM HI-SMALL
+
+### Comparison under Original
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.005403374800468968 | N/A |
+| **INTRINSIC** | RUS | - | 0.005133429955101795 | N/A |
+| **INTRINSIC** | SMOTE | - | 0.005464586855897105 | N/A |
+| **POSITIONAL** | NONE | - | 0.073853 ± 0.000000 | N/A |
+| **POSITIONAL** | RUS | - | 0.073247 ± 0.000000 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.078635 ± 0.000000 | N/A |
+| **DEEPWALK** | NONE | - | 0.008535339588437153 | N/A |
+| **DEEPWALK** | RUS | - | 0.005424942949325482 | N/A |
+| **DEEPWALK** | GRAPH_SMOTE | - | 0.005731590964511342 | N/A |
+| **DEEPWALK** | GRAPH_ENSEMBLE_SMOTE | - | 0.005590773444464106 | N/A |
+| **DEEPWALK** | REWEIGHTED_GRAPH_SMOTE | - | 0.005210883912647195 | N/A |
+| **NODE2VEC** | NONE | - | 0.0057619250092122995 | N/A |
+| **NODE2VEC** | RUS | - | 0.005410288612176201 | N/A |
+| **NODE2VEC** | GRAPH_SMOTE | - | 0.005357079027820212 | N/A |
+| **NODE2VEC** | GRAPH_ENSEMBLE_SMOTE | - | 0.004259193834683391 | N/A |
+| **NODE2VEC** | REWEIGHTED_GRAPH_SMOTE | - | 0.004777573001136537 | N/A |
+| **GCN** | NONE | - | 0.169093 ± 0.000000 | N/A |
+| **GCN** | RUS | - | 0.196224 ± 0.000000 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.198145 ± 0.000000 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.167489 ± 0.000000 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.211632 ± 0.000000 | N/A |
+| **SAGE** | NONE | - | 0.409032 ± 0.000000 | N/A |
+| **SAGE** | RUS | - | 0.326203 ± 0.000000 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.252561 ± 0.000000 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.264231 ± 0.000000 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.226666 ± 0.000000 | N/A |
+| **GAT** | NONE | - | 0.499281 ± 0.000000 | N/A |
+| **GAT** | RUS | - | 0.487058 ± 0.000000 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.108502 ± 0.000000 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.289623 ± 0.000000 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.309348 ± 0.000000 | N/A |
+| **GIN** | NONE | - | 0.163030 ± 0.000000 | N/A |
+| **GIN** | RUS | - | 0.293849 ± 0.000000 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.095116 ± 0.000000 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.067864 ± 0.000000 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.074442 ± 0.000000 | N/A |
+
+
+### Comparison under Ratio 1:100
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.005548372054455653 | N/A |
+| **INTRINSIC** | RUS | - | 0.005337526523896021 | N/A |
+| **POSITIONAL** | NONE | - | 0.074500 ± 0.000000 | N/A |
+| **POSITIONAL** | RUS | - | 0.046858 ± 0.000000 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.072509 ± 0.000000 | N/A |
+| **DEEPWALK** | NONE | - | 0.005575941014301863 | N/A |
+| **DEEPWALK** | RUS | - | 0.0038007847227920495 | N/A |
+| **NODE2VEC** | NONE | - | 0.005196485219799845 | N/A |
+| **NODE2VEC** | RUS | - | 0.002650657128144928 | N/A |
+| **GCN** | NONE | - | 0.219598 ± 0.000000 | N/A |
+| **GCN** | RUS | - | 0.258972 ± 0.000000 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.208014 ± 0.000000 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.210941 ± 0.000000 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.206886 ± 0.000000 | N/A |
+| **SAGE** | NONE | - | 0.329167 ± 0.000000 | N/A |
+| **SAGE** | RUS | - | 0.374788 ± 0.000000 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.314513 ± 0.000000 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.425788 ± 0.000000 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.337427 ± 0.000000 | N/A |
+| **GAT** | NONE | - | 0.493471 ± 0.000000 | N/A |
+| **GAT** | RUS | - | 0.494542 ± 0.000000 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.486468 ± 0.000000 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.467792 ± 0.000000 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.442302 ± 0.000000 | N/A |
+| **GIN** | NONE | - | 0.115152 ± 0.000000 | N/A |
+| **GIN** | RUS | - | 0.254644 ± 0.000000 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.150584 ± 0.000000 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.140276 ± 0.000000 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.124260 ± 0.000000 | N/A |
+
+
+### Comparison under Ratio 1:10
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.00542379594651492 | N/A |
+| **INTRINSIC** | RUS | - | 0.0047807257479718515 | N/A |
+| **POSITIONAL** | NONE | - | 0.073872 ± 0.000000 | N/A |
+| **POSITIONAL** | RUS | - | 0.071892 ± 0.000000 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.073654 ± 0.000000 | N/A |
+| **DEEPWALK** | NONE | - | 0.0033339826013872318 | N/A |
+| **DEEPWALK** | RUS | - | 0.004992989725400498 | N/A |
+| **NODE2VEC** | NONE | - | 0.005381791691478185 | N/A |
+| **NODE2VEC** | RUS | - | 0.009329307776859946 | N/A |
+| **GCN** | NONE | - | 0.218927 ± 0.000000 | N/A |
+| **GCN** | RUS | - | 0.198448 ± 0.000000 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.172950 ± 0.000000 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.204249 ± 0.000000 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.192361 ± 0.000000 | N/A |
+| **SAGE** | NONE | - | 0.389462 ± 0.000000 | N/A |
+| **SAGE** | RUS | - | 0.354215 ± 0.000000 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.439157 ± 0.000000 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.298164 ± 0.000000 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.404513 ± 0.000000 | N/A |
+| **GAT** | NONE | - | 0.458636 ± 0.000000 | N/A |
+| **GAT** | RUS | - | 0.424204 ± 0.000000 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.462708 ± 0.000000 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.423104 ± 0.000000 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.505852 ± 0.000000 | N/A |
+| **GIN** | NONE | - | 0.270284 ± 0.000000 | N/A |
+| **GIN** | RUS | - | 0.330026 ± 0.000000 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.246702 ± 0.000000 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.141357 ± 0.000000 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.352860 ± 0.000000 | N/A |
+
+
+### Comparison under Ratio 1:2
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.0046853772434349425 | N/A |
+| **INTRINSIC** | RUS | - | 0.004979321428722808 | N/A |
+| **POSITIONAL** | NONE | - | 0.046568 ± 0.000000 | N/A |
+| **POSITIONAL** | RUS | - | 0.073974 ± 0.000000 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.072633 ± 0.000000 | N/A |
+| **DEEPWALK** | NONE | - | 0.0025646500424898223 | N/A |
+| **DEEPWALK** | RUS | - | 0.002564825029942624 | N/A |
+| **NODE2VEC** | NONE | - | 0.020174594033715194 | N/A |
+| **NODE2VEC** | RUS | - | 0.005620873142280771 | N/A |
+| **GCN** | NONE | - | 0.212394 ± 0.000000 | N/A |
+| **GCN** | RUS | - | 0.218493 ± 0.000000 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.193161 ± 0.000000 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.189753 ± 0.000000 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.205621 ± 0.000000 | N/A |
+| **SAGE** | NONE | - | 0.380249 ± 0.000000 | N/A |
+| **SAGE** | RUS | - | 0.361560 ± 0.000000 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.312722 ± 0.000000 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.296574 ± 0.000000 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.274374 ± 0.000000 | N/A |
+| **GAT** | NONE | - | 0.305042 ± 0.000000 | N/A |
+| **GAT** | RUS | - | 0.502375 ± 0.000000 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.214692 ± 0.000000 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.096979 ± 0.000000 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.375834 ± 0.000000 | N/A |
+| **GIN** | NONE | - | 0.157740 ± 0.000000 | N/A |
+| **GIN** | RUS | - | 0.288222 ± 0.000000 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.124898 ± 0.000000 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.066057 ± 0.000000 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.076683 ± 0.000000 | N/A |
+
+
+### Comparison under Ratio 1:1
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.005411344298084493 | N/A |
+| **INTRINSIC** | RUS | - | 0.004495292373666872 | N/A |
+| **POSITIONAL** | NONE | - | 0.083073 ± 0.000000 | N/A |
+| **POSITIONAL** | RUS | - | 0.066993 ± 0.000000 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.073661 ± 0.000000 | N/A |
+| **DEEPWALK** | NONE | - | 0.00515068281614894 | N/A |
+| **DEEPWALK** | RUS | - | 0.003699195484437485 | N/A |
+| **NODE2VEC** | NONE | - | 0.005193273255529015 | N/A |
+| **NODE2VEC** | RUS | - | 0.005053245140126555 | N/A |
+| **GCN** | NONE | - | 0.192662 ± 0.000000 | N/A |
+| **GCN** | RUS | - | 0.144312 ± 0.000000 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.183959 ± 0.000000 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.004678401566399268 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.004674827528141328 | N/A |
+| **SAGE** | NONE | - | 0.006484530888065888 | N/A |
+| **SAGE** | RUS | - | 0.005031327627411901 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.004974572121806144 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.005783889807924681 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.005801463137189227 | N/A |
+| **GAT** | NONE | - | 0.005501320832288757 | N/A |
+| **GAT** | RUS | - | 0.006022571739834712 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.003567423160047792 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.006309908763073566 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.006532447570478876 | N/A |
+| **GIN** | NONE | - | 0.005830105391122968 | N/A |
+| **GIN** | RUS | - | 0.0025434102671566664 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.003545928180855354 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.0035996094574652373 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.0035818219111943797 | N/A |
+
+
+## Dataset: IBM LI-MEDIUM
+
+### Comparison under Original
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.00072 | N/A |
+| **INTRINSIC** | RUS | - | 0.00072 | N/A |
+| **INTRINSIC** | SMOTE | - | 0.00072 | N/A |
+| **POSITIONAL** | NONE | - | 0.0007023319427717472 | N/A |
+| **POSITIONAL** | RUS | - | 0.0007132873066548511 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.0007404076965451927 | N/A |
+| **DEEPWALK** | NONE | - | 0.000911578997021995 | N/A |
+| **DEEPWALK** | RUS | - | 0.0005984247104236024 | N/A |
+| **DEEPWALK** | GRAPH_SMOTE | - | 0.0010275472326989636 | N/A |
+| **DEEPWALK** | GRAPH_ENSEMBLE_SMOTE | - | 0.0006493870843631006 | N/A |
+| **DEEPWALK** | REWEIGHTED_GRAPH_SMOTE | - | 0.0007376196449502712 | N/A |
+| **NODE2VEC** | NONE | - | 0.0006349647033021024 | N/A |
+| **NODE2VEC** | RUS | - | 0.0010060653601660094 | N/A |
+| **NODE2VEC** | GRAPH_SMOTE | - | 0.0007707567372674414 | N/A |
+| **NODE2VEC** | GRAPH_ENSEMBLE_SMOTE | - | 0.0008702466347886528 | N/A |
+| **NODE2VEC** | REWEIGHTED_GRAPH_SMOTE | - | 0.0006684477781959681 | N/A |
+| **GCN** | NONE | - | 0.00072 | N/A |
+| **GCN** | RUS | - | 0.00072 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+| **SAGE** | NONE | - | 0.00072 | N/A |
+| **SAGE** | RUS | - | 0.00072 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GAT** | NONE | - | 0.00072 | N/A |
+| **GAT** | RUS | - | 0.00072 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GIN** | NONE | - | 0.00072 | N/A |
+| **GIN** | RUS | - | 0.00072 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+
+
+### Comparison under Ratio 1:100
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.00072 | N/A |
+| **INTRINSIC** | RUS | - | 0.00072 | N/A |
+| **POSITIONAL** | NONE | - | 0.0007089117288701473 | N/A |
+| **POSITIONAL** | RUS | - | 0.000711826605803452 | N/A |
+| **DEEPWALK** | NONE | - | 0.0007679902504329711 | N/A |
+| **DEEPWALK** | RUS | - | 0.0008669590841409375 | N/A |
+| **NODE2VEC** | NONE | - | 0.0006673863498462555 | N/A |
+| **NODE2VEC** | RUS | - | 0.0007561586876509191 | N/A |
+| **GCN** | NONE | - | 0.00072 | N/A |
+| **GCN** | RUS | - | 0.00072 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+| **SAGE** | NONE | - | 0.00072 | N/A |
+| **SAGE** | RUS | - | 0.00072 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GAT** | NONE | - | 0.00072 | N/A |
+| **GAT** | RUS | - | 0.00072 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GIN** | NONE | - | 0.00072 | N/A |
+| **GIN** | RUS | - | 0.00072 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+
+
+### Comparison under Ratio 1:10
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.00072 | N/A |
+| **INTRINSIC** | RUS | - | 0.00072 | N/A |
+| **POSITIONAL** | NONE | - | 0.0007079637356522394 | N/A |
+| **POSITIONAL** | RUS | - | 0.000742015281143216 | N/A |
+| **DEEPWALK** | NONE | - | 0.0007036142801676747 | N/A |
+| **DEEPWALK** | RUS | - | 0.0008645572510765713 | N/A |
+| **NODE2VEC** | NONE | - | 0.0007385502121547579 | N/A |
+| **NODE2VEC** | RUS | - | 0.000609380955267867 | N/A |
+| **GCN** | NONE | - | 0.00072 | N/A |
+| **GCN** | RUS | - | 0.00072 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+| **SAGE** | NONE | - | 0.00072 | N/A |
+| **SAGE** | RUS | - | 0.00072 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GAT** | NONE | - | 0.00072 | N/A |
+| **GAT** | RUS | - | 0.00072 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.00072 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.00072 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.00072 | N/A |
+
+
+### Comparison under Ratio 1:2
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+
+
+### Comparison under Ratio 1:1
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+
+
+## Dataset: IBM LI-SMALL
+
+### Comparison under Original
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.24485458517146014 | N/A |
+| **INTRINSIC** | RUS | - | 0.0037870915170215703 | N/A |
+| **INTRINSIC** | SMOTE | - | 0.24640528387378352 | N/A |
+| **POSITIONAL** | NONE | - | 0.002375214562121015 | N/A |
+| **POSITIONAL** | RUS | - | 0.002331650488891146 | N/A |
+| **POSITIONAL** | SMOTE | - | 0.0025073335220213476 | N/A |
+| **DEEPWALK** | NONE | - | 0.15000929723026754 | N/A |
+| **DEEPWALK** | RUS | - | 0.13982207300812988 | N/A |
+| **DEEPWALK** | GRAPH_SMOTE | - | 0.0975588786306991 | N/A |
+| **DEEPWALK** | GRAPH_ENSEMBLE_SMOTE | - | 0.046963386604731955 | N/A |
+| **DEEPWALK** | REWEIGHTED_GRAPH_SMOTE | - | 0.01378745403261336 | N/A |
+| **NODE2VEC** | NONE | - | 0.11611909081094074 | N/A |
+| **NODE2VEC** | RUS | - | 0.0014425512243422746 | N/A |
+| **NODE2VEC** | GRAPH_SMOTE | - | 0.0014874490547238993 | N/A |
+| **NODE2VEC** | GRAPH_ENSEMBLE_SMOTE | - | 0.17913513087566915 | N/A |
+| **NODE2VEC** | REWEIGHTED_GRAPH_SMOTE | - | 0.09577825225838695 | N/A |
+| **GCN** | NONE | - | 0.00243 | N/A |
+| **GCN** | RUS | - | 0.00243 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.002694045539821421 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.002930449841248261 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.0029637457024580607 | N/A |
+| **SAGE** | NONE | - | 0.00243 | N/A |
+| **SAGE** | RUS | - | 0.00243 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.0027017762792685535 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.0020063164070108354 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.003024681083323673 | N/A |
+| **GAT** | NONE | - | 0.00243 | N/A |
+| **GAT** | RUS | - | 0.00243 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.0025262605579991666 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.003313775923525649 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.0022229465566495376 | N/A |
+| **GIN** | NONE | - | 0.00243 | N/A |
+| **GIN** | RUS | - | 0.00243 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.00215207984456983 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.002464367519697375 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.001976740581924585 | N/A |
+
+
+### Comparison under Ratio 1:100
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.0031162000093780495 | N/A |
+| **INTRINSIC** | RUS | - | 0.24563779320447596 | N/A |
+| **POSITIONAL** | NONE | - | 0.002383813951619462 | N/A |
+| **POSITIONAL** | RUS | - | 0.00252892205724426 | N/A |
+| **DEEPWALK** | NONE | - | 0.10932160399545389 | N/A |
+| **DEEPWALK** | RUS | - | 0.09385027445885005 | N/A |
+| **NODE2VEC** | NONE | - | 0.11146805801622837 | N/A |
+| **NODE2VEC** | RUS | - | 0.0016220712567669724 | N/A |
+| **GCN** | NONE | - | 0.00243 | N/A |
+| **GCN** | RUS | - | 0.00243 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.002827081530451055 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.0028834484965981 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.0027402990456014426 | N/A |
+| **SAGE** | NONE | - | 0.00243 | N/A |
+| **SAGE** | RUS | - | 0.00243 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.003013688097557035 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.003166537064119933 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.0027050873790289516 | N/A |
+| **GAT** | NONE | - | 0.00243 | N/A |
+| **GAT** | RUS | - | 0.00243 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.0028978041819473508 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.0021815650038207075 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.0021478835564057316 | N/A |
+| **GIN** | NONE | - | 0.00243 | N/A |
+| **GIN** | RUS | - | 0.00243 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.0019141530170239667 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.001984490644040167 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.0024409623020018568 | N/A |
+
+
+### Comparison under Ratio 1:10
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.24625204434799566 | N/A |
+| **INTRINSIC** | RUS | - | 0.24607054142865986 | N/A |
+| **POSITIONAL** | NONE | - | 0.0025073335220213476 | N/A |
+| **POSITIONAL** | RUS | - | 0.0023840001787120654 | N/A |
+| **DEEPWALK** | NONE | - | 0.07878516860658363 | N/A |
+| **DEEPWALK** | RUS | - | 0.00504299893190289 | N/A |
+| **NODE2VEC** | NONE | - | 0.14551178305837575 | N/A |
+| **NODE2VEC** | RUS | - | 0.004305578557614189 | N/A |
+| **GCN** | NONE | - | 0.00243 | N/A |
+| **GCN** | RUS | - | 0.00243 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.0027985113956923726 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.002893259245425131 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.002435819698559787 | N/A |
+| **SAGE** | NONE | - | 0.00243 | N/A |
+| **SAGE** | RUS | - | 0.00243 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.0022568785015052834 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.002964799676267394 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.0030388025319847607 | N/A |
+| **GAT** | NONE | - | 0.00243 | N/A |
+| **GAT** | RUS | - | 0.00243 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.002719308000857422 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.0019131492264218251 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.0024519366335027173 | N/A |
+| **GIN** | NONE | - | 0.00243 | N/A |
+| **GIN** | RUS | - | 0.00243 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.0024844685507022213 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.0019788948242938876 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.0024002990889767564 | N/A |
+
+
+### Comparison under Ratio 1:2
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.0032084089687783113 | N/A |
+| **INTRINSIC** | RUS | - | 0.0031990037719958346 | N/A |
+| **POSITIONAL** | NONE | - | 0.00250735428921146 | N/A |
+| **POSITIONAL** | RUS | - | 0.0025073335220213476 | N/A |
+| **DEEPWALK** | NONE | - | 0.007627038410956709 | N/A |
+| **DEEPWALK** | RUS | - | 0.0023914159151746978 | N/A |
+| **NODE2VEC** | NONE | - | 0.005564382489276877 | N/A |
+| **NODE2VEC** | RUS | - | 0.0023983612913045893 | N/A |
+| **GCN** | NONE | - | 0.00243 | N/A |
+| **GCN** | RUS | - | 0.00243 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.0029250723281804554 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.0020820434839876494 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.0028222707647523886 | N/A |
+| **SAGE** | NONE | - | 0.00243 | N/A |
+| **SAGE** | RUS | - | 0.00243 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.0017152958091795054 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.0016106045193788783 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.0021586625732644945 | N/A |
+| **GAT** | NONE | - | 0.00243 | N/A |
+| **GAT** | RUS | - | 0.00243 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.0028519216260889197 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.0022734899157449426 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.003136572885532314 | N/A |
+| **GIN** | NONE | - | 0.00243 | N/A |
+| **GIN** | RUS | - | 0.00243 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.001973438960936149 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.002397821591947464 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.002923837306538421 | N/A |
+
+
+### Comparison under Ratio 1:1
+
+| Method | Sampling Technique | Baseline (No Clip, LR=0.05) | Tuned (Clip=1.0, LR=0.001) | Absolute Lift |
+| --- | --- | --- | --- | --- |
+| **INTRINSIC** | NONE | - | 0.2463984145300995 | N/A |
+| **INTRINSIC** | RUS | - | 0.0032011966966273573 | N/A |
+| **POSITIONAL** | NONE | - | 0.0023786416462510352 | N/A |
+| **POSITIONAL** | RUS | - | 0.0025064930108148918 | N/A |
+| **DEEPWALK** | NONE | - | 0.001940023026555936 | N/A |
+| **DEEPWALK** | RUS | - | 0.018444112116562873 | N/A |
+| **NODE2VEC** | NONE | - | 0.11779773454046204 | N/A |
+| **NODE2VEC** | RUS | - | 0.0021717469568723435 | N/A |
+| **GCN** | NONE | - | 0.00243 | N/A |
+| **GCN** | RUS | - | 0.00243 | N/A |
+| **GCN** | GRAPH_SMOTE | - | 0.002842082269446135 | N/A |
+| **GCN** | GRAPH_ENSEMBLE_SMOTE | - | 0.002791066556717264 | N/A |
+| **GCN** | REWEIGHTED_GRAPH_SMOTE | - | 0.002902203047982094 | N/A |
+| **SAGE** | NONE | - | 0.00243 | N/A |
+| **SAGE** | RUS | - | 0.00243 | N/A |
+| **SAGE** | GRAPH_SMOTE | - | 0.00277704219529869 | N/A |
+| **SAGE** | GRAPH_ENSEMBLE_SMOTE | - | 0.001813609439024893 | N/A |
+| **SAGE** | REWEIGHTED_GRAPH_SMOTE | - | 0.002596917518250843 | N/A |
+| **GAT** | NONE | - | 0.00243 | N/A |
+| **GAT** | RUS | - | 0.00243 | N/A |
+| **GAT** | GRAPH_SMOTE | - | 0.0024187621894783576 | N/A |
+| **GAT** | GRAPH_ENSEMBLE_SMOTE | - | 0.0023481415518523444 | N/A |
+| **GAT** | REWEIGHTED_GRAPH_SMOTE | - | 0.0015484424930842546 | N/A |
+| **GIN** | NONE | - | 0.00243 | N/A |
+| **GIN** | RUS | - | 0.00243 | N/A |
+| **GIN** | GRAPH_SMOTE | - | 0.003800816534572436 | N/A |
+| **GIN** | GRAPH_ENSEMBLE_SMOTE | - | 0.002979756201882052 | N/A |
+| **GIN** | REWEIGHTED_GRAPH_SMOTE | - | 0.002759911621690613 | N/A |
+
