@@ -456,7 +456,7 @@ def GNN_features(
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
                 early_stopping(metric_to_monitor, model)
                 if early_stopping.early_stop:
-                    print(f"[GNN_features] 連續 {patience} 個 Epoch 未改善，終止訓練！")
+                    print(f"[GNN_features] No improvement for {patience} consecutive epochs, stopping training!")
                     break
             else:
                 print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_result=None")
@@ -464,7 +464,7 @@ def GNN_features(
             print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f}")
             
     if val_mask is not None and os.path.exists(checkpoint_path):
-        print(f"[GNN_features] 載入驗證集最優表現模型權重: {checkpoint_path}")
+        print(f"[GNN_features] Loading best validation-performance model weights: {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     test_result = evaluate_split(test_mask)
     if test_result is None:
@@ -552,7 +552,7 @@ def GNN_features_with_predictions(
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
                 early_stopping(metric_to_monitor, model)
                 if early_stopping.early_stop:
-                    print(f"[GNN_features] 連續 {patience} 個 Epoch 未改善，終止訓練！")
+                    print(f"[GNN_features] No improvement for {patience} consecutive epochs, stopping training!")
                     break
             else:
                 print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_result=None")
@@ -560,7 +560,7 @@ def GNN_features_with_predictions(
             print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f}")
             
     if val_mask is not None and os.path.exists(checkpoint_path):
-        print(f"[GNN_features] 載入驗證集最優表現模型權重: {checkpoint_path}")
+        print(f"[GNN_features] Loading best validation-performance model weights: {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     
     test_result = evaluate_split(test_mask)
@@ -701,7 +701,7 @@ def GNN_features_graphsmote(
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
                 early_stopping(metric_to_monitor, model)
                 if early_stopping.early_stop:
-                    print(f"[{sampling}] 連續 {patience} 個 Epoch 未改善，終止訓練！")
+                    print(f"[{sampling}] No improvement for {patience} consecutive epochs, stopping training!")
                     break
             else:
                 print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_result=None")
@@ -709,7 +709,7 @@ def GNN_features_graphsmote(
             print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f}")
 
     if val_mask is not None and os.path.exists(checkpoint_path):
-        print(f"[{sampling}] 載入驗證集最優表現模型權重: {checkpoint_path}")
+        print(f"[{sampling}] Loading best validation-performance model weights: {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     test_result = evaluate_split(test_mask)
     if test_result is None:
@@ -843,7 +843,7 @@ def GNN_features_graphsmote_with_predictions(
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
                 early_stopping(metric_to_monitor, model)
                 if early_stopping.early_stop:
-                    print(f"[{sampling}] 連續 {patience} 個 Epoch 未改善，終止訓練！")
+                    print(f"[{sampling}] No improvement for {patience} consecutive epochs, stopping training!")
                     break
             else:
                 print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_result=None")
@@ -851,7 +851,7 @@ def GNN_features_graphsmote_with_predictions(
             print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f}")
 
     if val_mask is not None and os.path.exists(checkpoint_path):
-        print(f"[{sampling}] 載入驗證集最優表現模型權重: {checkpoint_path}")
+        print(f"[{sampling}] Loading best validation-performance model weights: {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     test_result = evaluate_split(test_mask)
     if test_result is None:

@@ -207,36 +207,36 @@ class GIN(nn.Module):
             self.gin1 = GINConv(
                 nn.Sequential(
                     nn.Linear(num_features, hidden_dim),
-                    nn.BatchNorm1d(hidden_dim),
+                    nn.LayerNorm(hidden_dim),
                     nn.ReLU(),
                     nn.Linear(hidden_dim, embedding_dim)
                     ))
-            
+
         else:
             self.gin1 = GINConv(
                 nn.Sequential(
-                    nn.Linear(num_features, hidden_dim), 
-                    nn.BatchNorm1d(hidden_dim),
+                    nn.Linear(num_features, hidden_dim),
+                    nn.LayerNorm(hidden_dim),
                     nn.ReLU(),
                     nn.Linear(hidden_dim, hidden_dim),
                     nn.ReLU()
                     ))
-            
+
             self.gin_hidden = nn.ModuleList()
             for _ in range(n_layers-2):
                 self.gin_hidden.append(GINConv(
                     nn.Sequential(
-                        nn.Linear(hidden_dim, hidden_dim), 
-                        nn.BatchNorm1d(hidden_dim),
+                        nn.Linear(hidden_dim, hidden_dim),
+                        nn.LayerNorm(hidden_dim),
                         nn.ReLU(),
                         nn.Linear(hidden_dim, hidden_dim),
                         nn.ReLU()
                         )))
-            
+
             self.gin2 = GINConv(
                 nn.Sequential(
-                    nn.Linear(hidden_dim, hidden_dim), 
-                    nn.BatchNorm1d(hidden_dim),
+                    nn.Linear(hidden_dim, hidden_dim),
+                    nn.LayerNorm(hidden_dim),
                     nn.ReLU(),
                     nn.Linear(hidden_dim, embedding_dim)
                     ))
@@ -281,7 +281,7 @@ class GINE(nn.Module):
             self.gine1 = GINEConv(
                 nn.Sequential(
                     nn.Linear(num_features, hidden_dim),
-                    nn.BatchNorm1d(hidden_dim),
+                    nn.LayerNorm(hidden_dim),
                     nn.ReLU(),
                     nn.Linear(hidden_dim, embedding_dim)
                     ),
@@ -289,30 +289,30 @@ class GINE(nn.Module):
         else:
             self.gine1 = GINEConv(
                 nn.Sequential(
-                    nn.Linear(num_features, hidden_dim), 
-                    nn.BatchNorm1d(hidden_dim),
+                    nn.Linear(num_features, hidden_dim),
+                    nn.LayerNorm(hidden_dim),
                     nn.ReLU(),
                     nn.Linear(hidden_dim, hidden_dim),
                     nn.ReLU()
                     ),
                     edge_dim=edge_dim)
-            
+
             self.gine_hidden = nn.ModuleList()
             for _ in range(n_layers-2):
                 self.gine_hidden.append(GINEConv(
                     nn.Sequential(
-                        nn.Linear(hidden_dim, hidden_dim), 
-                        nn.BatchNorm1d(hidden_dim),
+                        nn.Linear(hidden_dim, hidden_dim),
+                        nn.LayerNorm(hidden_dim),
                         nn.ReLU(),
                         nn.Linear(hidden_dim, hidden_dim),
                         nn.ReLU()
                         ),
                         edge_dim=edge_dim))
-                
+
             self.gine2 = GINEConv(
                 nn.Sequential(
-                    nn.Linear(hidden_dim, hidden_dim), 
-                    nn.BatchNorm1d(hidden_dim),
+                    nn.Linear(hidden_dim, hidden_dim),
+                    nn.LayerNorm(hidden_dim),
                     nn.ReLU(),
                     nn.Linear(hidden_dim, embedding_dim)
                     ),

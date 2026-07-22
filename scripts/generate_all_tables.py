@@ -6,7 +6,6 @@ import re
 from pathlib import Path
 from collections import defaultdict
 
-# 5個實際執行的資料集分類對照
 DATASET_MAP = {
     'hi_small': 'IBM HI-SMALL',
     'hi_medium': 'IBM HI-MEDIUM',
@@ -26,7 +25,7 @@ SAMPLING_TECHNIQUES = {
     'REWEIGHTED_GRAPH_SMOTE': 'REWEIGHTED_GRAPH_SMOTE'
 }
 
-# 模型與其適用的採樣方法映射 (避免在表格中產生無效的 N/A 橫列)
+# Mapping of models to their applicable sampling methods (avoids invalid N/A rows in tables)
 METHOD_SAMPLING_MAP = {
     'INTRINSIC': ['NONE', 'RUS', 'SMOTE'],
     'POSITIONAL': ['NONE', 'RUS', 'SMOTE'],
@@ -40,55 +39,53 @@ METHOD_SAMPLING_MAP = {
 
 RATIOS = ['original', 'ratio_1to10', 'ratio_1to2', 'ratio_1to1']
 
-# 比例顯示對照表
 RATIO_DISPLAY = {
-    'original': '原始比例 (Original)',
-    'ratio_1to10': '比例 1:10 (Ratio)',
-    'ratio_1to2': '比例 1:2 (Ratio)',
-    'ratio_1to1': '比例 1:1 (Ratio)'
+    'original': 'Original ratio (Original)',
+    'ratio_1to10': 'Ratio 1:10 (Ratio)',
+    'ratio_1to2': 'Ratio 1:2 (Ratio)',
+    'ratio_1to1': 'Ratio 1:1 (Ratio)'
 }
 
 def infer_metadata(path: Path):
     name = path.name
-    # 判斷是否為 summary 檔
     stem = name[:-12] if name.endswith('_summary.txt') else (name[:-4] if name.endswith('.txt') else name)
-    
-    # 1. 識別資料集
+
+    # 1. Identify dataset
     dataset = 'unknown'
     for d_tag in DATASET_MAP.keys():
         if d_tag in path.name:
             dataset = d_tag
             break
-            
-    # 2. 識別模型方法
+
+    # 2. Identify model method
     method = 'UNKNOWN'
     stem_upper = stem.upper()
     for m in METHODS:
         if m in stem_upper:
             method = m
             break
-            
-    # 3. 識別比例
+
+    # 3. Identify ratio
     ratio = 'original'
     for r in RATIOS:
         if r in stem:
             ratio = r
             break
-            
-    # 4. 識別採樣技術
+
+    # 4. Identify sampling technique
     sampling = 'NONE'
     for s in ['reweighted_graph_smote', 'graph_ensemble_smote', 'graph_smote', 'smote', 'rus']:
         if s in stem:
             sampling = s.upper()
             break
-            
-    # 5. 識別指標類型
+
+    # 5. Identify metric type
     if 'F1_99' in stem_upper:
         metric_type = 'F1_99'
     else:
         metric_type = 'AUC-PRC'
-        
-    # 6. 識別是否為 Tuned
+
+    # 6. Identify whether it's tuned
     is_tuned = 'tuned' in str(path.parent) or 'tuned' in path.name
     return method, dataset, ratio, sampling, metric_type, is_tuned
 
@@ -97,8 +94,8 @@ def parse_metrics(path: Path, metric_type: str):
         content = path.read_text(encoding='utf-8').strip()
         if not content:
             return None
-            
-        # 1. 如果是 summary 檔案，提取對應指標的 "0.XXXXXX ± 0.YYYYYY"
+
+        # 1. If it's a summary file, extract the metric's "0.XXXXXX ± 0.YYYYYY"
         if path.name.endswith('_summary.txt'):
             for line in content.splitlines():
                 if ':' in line:
@@ -107,11 +104,11 @@ def parse_metrics(path: Path, metric_type: str):
                         return val.strip()
                     elif metric_type == 'F1_99' and 'F1_99' in key.strip().upper():
                         return val.strip()
-            # 兜底：如果檔案只有單行
+            # Fallback: if the file has only a single line
             if ':' not in content and '±' in content:
                 return content.strip()
-                
-        # 2. 如果是單次運行檔案，解析 "AUC-PRC: 0.XXXX, F1_99: 0.YYYY"
+
+        # 2. If it's a single-run file, parse "AUC-PRC: 0.XXXX, F1_99: 0.YYYY"
         tokens = content.split(',')
         for token in tokens:
             if ':' in token:
@@ -121,8 +118,8 @@ def parse_metrics(path: Path, metric_type: str):
                     return val.strip()
                 elif metric_type == 'F1_99' and 'F1_99' in key_clean:
                     return val.strip()
-                    
-        # 兜底：如果檔案只有單個數值
+
+        # Fallback: if the file has only a single value
         if len(content) < 30 and ':' not in content:
             try:
                 float(content)
@@ -134,7 +131,7 @@ def parse_metrics(path: Path, metric_type: str):
     return None
 
 def clean_val(val_str):
-    """提取數值中的 float，用於找出最優值與計算提升比例"""
+    """Extract the float within a value; used to find the best value and compute lift."""
     if not val_str or val_str == 'N/A' or val_str == '-':
         return None
     match = re.search(r'([0-9\.]+)', str(val_str))
@@ -143,7 +140,7 @@ def clean_val(val_str):
     return None
 
 def format_cell_value(val):
-    """格式化輸出數值，保留小數點後四位"""
+    """Format the output value, keeping four decimal places."""
     if not val or val == 'N/A' or val == '-':
         return '-'
     match = re.match(r'^\s*([0-9\.]+)\s*±\s*([0-9\.]+)\s*$', str(val))
@@ -163,16 +160,16 @@ def main():
     if not res_dir.exists():
         print("Error: 'res' directory not found.")
         return
-        
+
     tables_dir = Path('tables')
     tables_dir.mkdir(exist_ok=True)
-    
+
     # matrix[is_tuned][metric_type][dataset][sampling][method][ratio] = value
     matrix = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))))
-    
+
     all_files = list(res_dir.glob('**/*.txt'))
     print(f"Total files found in res/: {len(all_files)}")
-    
+
     for path in all_files:
         if path.name.startswith('.'):
             continue
@@ -182,29 +179,29 @@ def main():
             if val:
                 is_summary = path.name.endswith('_summary.txt')
                 current_val = matrix[is_tuned][metric_type][dataset][sampling][method].get(ratio)
-                # 優先保留 summary.txt 的結果 (帶有標準差)
+                # Prefer keeping summary.txt results (which include standard deviation)
                 if not current_val or is_summary or ('±' not in str(current_val) and '±' in str(val)):
                     matrix[is_tuned][metric_type][dataset][sampling][method][ratio] = val
-                    
-    # ========== 1. 輸出 Baseline 與 Tuned 縱向「模型 × 採樣」聯立大表 ==========
+
+    # ========== 1. Output the combined vertical "Model x Sampling" table for Baseline and Tuned ==========
     for is_tuned, folder_name in [(False, "baseline"), (True, "tuned")]:
         for m_type in ['AUC-PRC', 'F1_99']:
             output_lines = []
-            output_lines.append(f"# {folder_name.upper()} 模型 × 採樣 縱向聯立分析矩陣 ({m_type})\n")
-            output_lines.append("本表格以模型為主軸，橫向展示在不同不平衡比例下，各採樣技術的性能演變。**粗體高亮**代表各模型在所有比例下的最優值。\n")
-            
+            output_lines.append(f"# {folder_name.upper()} Model x Sampling Vertical Joint Analysis Matrix ({m_type})\n")
+            output_lines.append("This table is organized by model, showing horizontally how each sampling technique's performance evolves across different imbalance ratios. **Bold** marks the best value for each model across all ratios.\n")
+
             for d_key in sorted(DATASET_MAP.keys()):
                 d_name = DATASET_MAP[d_key]
                 output_lines.append(f"## Dataset: {d_name}\n")
-                
-                headers = ['模型 (Method)', '採樣技術 (Sampling)', '原始比例 (Original)', '比例 1:10 (Ratio)', '比例 1:2 (Ratio)', '比例 1:1 (Ratio)']
+
+                headers = ['Model (Method)', 'Sampling Technique (Sampling)', 'Original ratio (Original)', 'Ratio 1:10 (Ratio)', 'Ratio 1:2 (Ratio)', 'Ratio 1:1 (Ratio)']
                 output_lines.append('| ' + ' | '.join(headers) + ' |')
                 output_lines.append('| ' + ' | '.join([':---', ':---', ':---:', ':---:', ':---:', ':---:']) + ' |')
-                
+
                 for method in METHODS:
                     samplings = METHOD_SAMPLING_MAP.get(method, [])
-                    
-                    # 計算該 method 在此 dataset 所有採樣和比例下的最大值，用於高亮
+
+                    # Compute the max value for this method across all samplings/ratios in this dataset, for highlighting
                     max_val = -1.0
                     for s_key in samplings:
                         for ratio in RATIOS:
@@ -212,99 +209,99 @@ def main():
                             f_val = clean_val(val)
                             if f_val is not None and f_val > max_val:
                                 max_val = f_val
-                                
+
                     for idx, s_key in enumerate(samplings):
                         s_name = SAMPLING_TECHNIQUES.get(s_key, s_key)
                         s_display = "None (Baseline)" if s_key == 'NONE' else s_name
-                        
+
                         row_cells = []
-                        # 模型名稱僅在該模型的第一行顯示，其餘留白，維持學術美感
+                        # Model name is shown only on the model's first row; left blank otherwise
                         if idx == 0:
                             row_cells.append(f"**{method}**")
                         else:
                             row_cells.append("")
-                            
+
                         row_cells.append(s_display)
-                        
+
                         for ratio in RATIOS:
                             val = matrix[is_tuned][m_type][d_key][s_key][method].get(ratio)
                             formatted_val = format_cell_value(val)
-                            
-                            # 如果是最大值，進行高亮
+
+                            # Highlight if this is the max value
                             f_val = clean_val(val)
                             if f_val is not None and max_val > 0 and abs(f_val - max_val) < 1e-7:
                                 formatted_val = f"**{formatted_val}**"
-                                
+
                             row_cells.append(formatted_val)
-                            
+
                         output_lines.append('| ' + ' | '.join(row_cells) + ' |')
-                    
-                    # 每個模型結束後補一個表格分隔行 (空列)，增加易讀性
+
+                    # Add a separator row (blank row) after each model to improve readability
                     output_lines.append('| | | | | | |')
-                    
+
                 output_lines.append("\n---\n")
-                
+
             output_file = tables_dir / f"ratio_comparison_tables_{folder_name}_{m_type.lower().replace('-', '_')}.md"
             output_file.write_text('\n'.join(output_lines), encoding='utf-8')
             print(f"[Success] Saved {folder_name} {m_type} table to: {output_file}")
-            
-    # ========== 2. 輸出 額外對照表格 (Baseline vs Tuned Ablation Study) ==========
+
+    # ========== 2. Output additional comparison table (Baseline vs Tuned Ablation Study) ==========
     for m_type in ['AUC-PRC', 'F1_99']:
         comparison_lines = []
-        comparison_lines.append(f"# 參數調優與消融對比大表 ({m_type})\n")
-        comparison_lines.append("本表格橫向對比 **Baseline (LR=0.05, No Clip)** 與 **Tuned (LR=0.001, Gradient Clip=1.0)**，並計算絕對性能提升 (Absolute Lift)。\n")
-        
+        comparison_lines.append(f"# Hyperparameter Tuning vs Ablation Comparison Table ({m_type})\n")
+        comparison_lines.append("This table compares **Baseline (LR=0.05, No Clip)** against **Tuned (LR=0.001, Gradient Clip=1.0)** side by side, and computes the absolute performance improvement (Absolute Lift).\n")
+
         for d_key in sorted(DATASET_MAP.keys()):
             d_name = DATASET_MAP[d_key]
             comparison_lines.append(f"## Dataset: {d_name}\n")
-            
+
             for ratio in RATIOS:
                 ratio_name = RATIO_DISPLAY[ratio]
-                comparison_lines.append(f"### 設定比例: {ratio_name}\n")
-                
-                headers = ['模型 (Method)', '採樣技術 (Sampling)', 'Baseline (LR=0.05)', 'Tuned (LR=0.001)', '絕對提升 (Absolute Lift)']
+                comparison_lines.append(f"### Configured Ratio: {ratio_name}\n")
+
+                headers = ['Model (Method)', 'Sampling Technique (Sampling)', 'Baseline (LR=0.05)', 'Tuned (LR=0.001)', 'Absolute Lift (Absolute Lift)']
                 comparison_lines.append('| ' + ' | '.join(headers) + ' |')
                 comparison_lines.append('| ' + ' | '.join([':---', ':---', ':---:', ':---:', ':---:']) + ' |')
-                
+
                 for method in METHODS:
                     samplings = METHOD_SAMPLING_MAP.get(method, [])
                     for idx, s_key in enumerate(samplings):
                         s_name = SAMPLING_TECHNIQUES.get(s_key, s_key)
                         s_display = "None (Baseline)" if s_key == 'NONE' else s_name
-                        
+
                         row_cells = []
                         if idx == 0:
                             row_cells.append(f"**{method}**")
                         else:
                             row_cells.append("")
-                            
+
                         row_cells.append(s_display)
-                        
+
                         val_base = matrix[False][m_type][d_key][s_key][method].get(ratio, '-')
                         val_tuned = matrix[True][m_type][d_key][s_key][method].get(ratio, '-')
-                        
+
                         formatted_base = format_cell_value(val_base)
                         formatted_tuned = format_cell_value(val_tuned)
-                        
+
                         float_base = clean_val(val_base)
                         float_tuned = clean_val(val_tuned)
-                        
+
                         if float_base is not None and float_tuned is not None:
                             diff = float_tuned - float_base
                             sign = "+" if diff >= 0 else ""
-                            # 高亮正提升
+                            # Highlight positive improvement
                             if diff > 0:
                                 lift_str = f"**{sign}{diff:.4f}**"
                             else:
                                 lift_str = f"{sign}{diff:.4f}"
                         else:
                             lift_str = "-"
-                            
+
                         row_cells.extend([formatted_base, formatted_tuned, lift_str])
                         comparison_lines.append('| ' + ' | '.join(row_cells) + ' |')
                 comparison_lines.append("\n")
             comparison_lines.append("\n---\n")
-            
+
         output_file = tables_dir / f"ablation_comparison_{m_type.lower().replace('-', '_')}.md"
         output_file.write_text('\n'.join(comparison_lines), encoding='utf-8')
         print(f"[Success] Saved Ablation Comparison Table to: {output_file}")

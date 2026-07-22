@@ -185,7 +185,7 @@ if __name__ == "__main__":
 
                     # ========== F1 MODE ==========
                     if args.mode == 'f1':
-                        # 【精準路由修正】：移除不存在的 _smote_with_predictions，統一調用正確接口並傳入 sampling 參數
+                        # [Routing fix]: removed the nonexistent _smote_with_predictions; call the correct interface uniformly and pass the sampling parameter
                         if method == "intrinsic":
                             ap_score, y_pred_probs, y_true = intrinsic_features_with_predictions(
                                 ntw, train_mask_sampled, test_mask, n_layers_decoder=2, hidden_dim_decoder=16, lr=0.05, n_epochs_decoder=100,

@@ -19,7 +19,7 @@ SRC_PATH = os.path.abspath(os.path.join(DIR, '..', 'src'))
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
 
-# 從我們自定義的 tuned 模組導入具有梯度剪裁與防退化重加權的實驗方法
+# Import experiment methods with gradient clipping and anti-degeneration reweighting from our custom tuned module
 from src.methods.experiments_supervised_tuned import (
     intrinsic_features,
     positional_features,
@@ -60,15 +60,19 @@ if __name__ == "__main__":
         default='hi_small', 
         help='Dataset/configuration to run'
     )
-    # ===== 新增超參數調優參數 =====
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate for GNNs and decoders (default: 0.001 to prevent gradient explosion)')
     parser.add_argument('--clip_norm', type=float, default=1.0, help='Maximum gradient norm for clipping (default: 1.0)')
     parser.add_argument('--out_dir', type=str, default='res/tuned', help='Directory to save results (default: res/tuned)')
+    parser.add_argument(
+        '--methods', nargs='+',
+        choices=['intrinsic', 'positional', 'deepwalk', 'node2vec', 'gcn', 'sage', 'gat', 'gin'],
+        default=None,
+        help='Restrict to a subset of methods (default: all 8)'
+    )
 
     args = parser.parse_args()
     set_seed(args.seed)
 
-    # 確保輸出目錄與 Checkpoints 子目錄存在
     os.makedirs(args.out_dir, exist_ok=True)
     checkpoint_dir = os.path.join(args.out_dir, "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -85,8 +89,8 @@ if __name__ == "__main__":
         raise ValueError("Network not found")
 
     train_mask, val_mask, test_mask = ntw.get_masks()
-    to_train = ["intrinsic", "positional", "deepwalk", "node2vec", "gcn", "sage", "gat", "gin"]
-    
+    to_train = args.methods if args.methods is not None else ["intrinsic", "positional", "deepwalk", "node2vec", "gcn", "sage", "gat", "gin"]
+
     # NOTE: "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote" are intentionally
     # NOT offered for "deepwalk"/"node2vec". Those techniques oversample by interpolating in
     # FEATURE space (SMOTE-style), but DeepWalk/Node2Vec embeddings are derived purely from
@@ -142,7 +146,7 @@ if __name__ == "__main__":
                     result_files = [f"{args.out_dir}/{method}_f1_99_params_{result_tag}.txt"]
                     check_contents = ["F1_99:"]
 
-                # ----- 防重複計算檢查 -----
+                # ----- Skip-if-already-computed check -----
                 all_exist = True
                 for rf, cc in zip(result_files, check_contents):
                     if not os.path.exists(rf):
