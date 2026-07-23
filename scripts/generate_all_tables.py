@@ -26,7 +26,6 @@ SAMPLING_TECHNIQUES = {
 
 RATIOS = ['original', 'ratio_1to100', 'ratio_1to10', 'ratio_1to2', 'ratio_1to1']
 
-
 RATIO_DISPLAY = {
     'original': 'Original',
     'ratio_1to100': '1:100 (Ratio)',
@@ -48,10 +47,8 @@ METHOD_SAMPLING_MAP = {
 
 def infer_metadata(path: Path):
     name = path.name
-  
     stem = name[:-12] if name.endswith('_summary.txt') else (name[:-4] if name.endswith('.txt') else name)
     
-  
     dataset = 'unknown'
     for d_tag in DATASET_MAP.keys():
         if d_tag in path.name:
@@ -77,39 +74,46 @@ def infer_metadata(path: Path):
             sampling = s.upper()
             break
             
-    if 'F1_99' in stem_upper:
-        metric_type = 'F1_99'
-    else:
-        metric_type = 'AUC-PRC'
-        
     is_tuned = 'tuned' in str(path.parent) or 'tuned' in path.name
-    return method, dataset, ratio, sampling, metric_type, is_tuned
+    return method, dataset, ratio, sampling, is_tuned
 
-def parse_metrics(path: Path, metric_type: str):
+def parse_both_metrics(path: Path):
+    """
+    Extracts both AUC-PRC and F1 scores simultaneously from a single log file content.
+    Returns: (auc_val, f1_val)
+    """
+    auc_val = None
+    f1_val = None
     try:
         content = path.read_text(encoding='utf-8').strip()
         if not content:
-            return None
-        tokens = content.split(',')
-        for token in tokens:
-            if ':' in token:
-                key, val = token.split(':', 1)
-                key_clean = key.strip().upper()
-                if metric_type == 'AUC-PRC' and 'AUC-PRC' in key_clean:
-                    return val.strip()
-                elif metric_type == 'F1_99' and 'F1_99' in key_clean:
-                    return val.strip()
+            return None, None
+        
+        lines = content.splitlines()
+        # 1. Parse line by line to support multi-line summary formats
+        for line in lines:
+            if ':' in line:
+                key, val = line.split(':', 1)
+                key_upper = key.strip().upper()
+                if 'AUC-PRC' in key_upper:
+                    auc_val = val.strip()
+                elif 'F1_99' in key_upper or key_upper == 'F1':
+                    f1_val = val.strip()
                     
-        # Fallback: If no key-value pair is found, check if the content is a single numeric value
-        if len(content) < 30 and ':' not in content:
-            try:
-                float(content)
-                return content
-            except ValueError:
-                pass
+        # 2. Fallback: Parse inline tokens separated by commas
+        if not auc_val or not f1_val:
+            tokens = content.split(',')
+            for token in tokens:
+                if ':' in token:
+                    key, val = token.split(':', 1)
+                    key_clean = key.strip().upper()
+                    if 'AUC-PRC' in key_clean:
+                        auc_val = val.strip()
+                    elif 'F1_99' in key_clean or key_clean == 'F1':
+                        f1_val = val.strip()
     except Exception:
         pass
-    return None
+    return auc_val, f1_val
 
 def clean_val(val_str):
     if not val_str or val_str == 'N/A' or val_str == '-':
@@ -152,15 +156,21 @@ def main():
     for path in all_files:
         if path.name.startswith('.'):
             continue
-        method, dataset, ratio, sampling, metric_type, is_tuned = infer_metadata(path)
+        method, dataset, ratio, sampling, is_tuned = infer_metadata(path)
             
         if dataset in DATASET_MAP and method in METHODS:
-            val = parse_metrics(path, metric_type)
-            if val:
-                is_summary = path.name.endswith('_summary.txt')
-                current_val = matrix[metric_type][dataset][sampling][method].get(ratio)
-                if not current_val or is_summary or ('±' not in str(current_val) and '±' in str(val)):
-                    matrix[metric_type][dataset][sampling][method][ratio] = val
+            auc_val, f1_val = parse_both_metrics(path)
+            is_summary = path.name.endswith('_summary.txt')
+            
+            if auc_val:
+                current_auc = matrix['AUC-PRC'][dataset][sampling][method].get(ratio)
+                if not current_auc or is_summary or ('±' not in str(current_auc) and '±' in str(auc_val)):
+                    matrix['AUC-PRC'][dataset][sampling][method][ratio] = auc_val
+                    
+            if f1_val:
+                current_f1 = matrix['F1_99'][dataset][sampling][method].get(ratio)
+                if not current_f1 or is_summary or ('±' not in str(current_f1) and '±' in str(f1_val)):
+                    matrix['F1_99'][dataset][sampling][method][ratio] = f1_val
 
     sorted_datasets = ['elliptic', 'hi_small', 'hi_medium', 'li_small', 'li_medium']
     
@@ -170,9 +180,8 @@ def main():
         
         for ratio in RATIOS:
             ratio_title = RATIO_DISPLAY[ratio]
-            output_lines.append(f"## 評估設定比例: {ratio_title}\n")
+            output_lines.append(f"## {ratio_title}\n")
             
-            # build the table header
             headers = ['Method', 'Sampling', 'ELLIPTIC', 'IBM HI-SMALL', 'IBM HI-MEDIUM', 'IBM LI-SMALL', 'IBM LI-MEDIUM']
             output_lines.append('| ' + ' | '.join(headers) + ' |')
             output_lines.append('| ' + ' | '.join([':---', ':---', ':---:', ':---:', ':---:', ':---:', ':---:']) + ' |')
@@ -180,7 +189,6 @@ def main():
             for method in METHODS:
                 samplings = METHOD_SAMPLING_MAP.get(method, [])
                 
-                # calculate the maximum value for each dataset column to highlight the best performance
                 col_max_vals = {}
                 for d_key in sorted_datasets:
                     vals_for_dataset = []
@@ -192,11 +200,9 @@ def main():
                     col_max_vals[d_key] = max(vals_for_dataset) if vals_for_dataset else -1.0
                 
                 for idx, s_key in enumerate(samplings):
-                    s_name = SAMPLING_TECHNIQUES.get(s_key, s_key)
-                    s_display = "None (Baseline)" if s_key == 'NONE' else s_name
+                    s_display = "None (Baseline)" if s_key == 'NONE' else SAMPLING_TECHNIQUES.get(s_key, s_key)
                     
                     row_cells = []
-                    # only display the method name for the first sampling technique row
                     if idx == 0:
                         row_cells.append(f"**{method}**")
                     else:
@@ -204,7 +210,6 @@ def main():
                         
                     row_cells.append(s_display)
                     
-                    # populate the performance values for each dataset
                     for d_key in sorted_datasets:
                         val = matrix[m_type][d_key][s_key][method].get(ratio)
                         formatted_val = format_cell_value(val)
@@ -212,7 +217,6 @@ def main():
                         f_val = clean_val(val)
                         max_val_for_col = col_max_vals[d_key]
                         
-                        # emphasize the best value in the column (dataset) for this method and ratio
                         if f_val is not None and max_val_for_col > 0 and abs(f_val - max_val_for_col) < 1e-7:
                             formatted_val = f"**{formatted_val}**"
                         row_cells.append(formatted_val)
