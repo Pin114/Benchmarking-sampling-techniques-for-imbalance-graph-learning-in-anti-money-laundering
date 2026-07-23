@@ -180,7 +180,7 @@ def main():
         
         for ratio in RATIOS:
             ratio_title = RATIO_DISPLAY[ratio]
-            output_lines.append(f"## {ratio_title}\n")
+            output_lines.append(f"##{ratio_title}\n")
             
             headers = ['Method', 'Sampling', 'ELLIPTIC', 'IBM HI-SMALL', 'IBM HI-MEDIUM', 'IBM LI-SMALL', 'IBM LI-MEDIUM']
             output_lines.append('| ' + ' | '.join(headers) + ' |')
@@ -226,7 +226,14 @@ def main():
                 output_lines.append('| | | | | | | |')
                 
             output_lines.append("\n---\n")
-            
+
+        # if dataset is elliptic and ratio is ratio_1to100, force to '-'
+        for d_key in sorted_datasets:
+            if d_key == 'elliptic':
+                for s_key in SAMPLING_TECHNIQUES.keys():
+                    for method in METHODS:
+                        matrix[m_type][d_key][s_key][method]['ratio_1to100'] = '-' 
+        
         output_file = tables_dir / f"tuned_only_ratio_comparison_{m_type.lower().replace('-', '_')}.md"
         output_file.write_text('\n'.join(output_lines), encoding='utf-8')
         print(f"[Success] Saved Tuned-Only {m_type} table to: {output_file}")
