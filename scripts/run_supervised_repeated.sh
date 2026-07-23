@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# run_supervised_repeated.sh - Multi-seed Supervised Training Runner (Baseline)
+# run_supervised_repeated.sh - Multi-seed Supervised Training Runner 
 # ==============================================================================
-# This script runs the baseline supervised model across multiple seeds and
+# This script runs the supervised model across multiple seeds and
 # automatically compiles statistics (Mean ± Std) for all metrics.
 #
 # Fixes applied:
@@ -26,11 +26,11 @@ mkdir -p res
 
 
 # ------------------------------------------------------------------------------
-#  Run Supervised Baseline Across Seeds
+#  Run Supervised Across Seeds
 # ------------------------------------------------------------------------------
 for seed in "${SEEDS[@]}"; do
     echo "================================================================================"
-    echo "▶ STARTING BASELINE RUN: Dataset=${NETWORK_NAME} | Seed=${seed} | Mode=${MODE}"
+    echo "▶ STARTING RUN: Dataset=${NETWORK_NAME} | Seed=${seed} | Mode=${MODE}"
     echo "================================================================================"
     "$PYTHON_BIN" scripts/train_supervised_tuned.py --mode "$MODE" --network "$NETWORK_NAME" --seed "$seed"
 done

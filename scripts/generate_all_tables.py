@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 import os
 import re
 from pathlib import Path
 from collections import defaultdict
 
-# 5個實際執行的資料集分類對照
 DATASET_MAP = {
     'hi_small': 'IBM HI-SMALL',
     'hi_medium': 'IBM HI-MEDIUM',
@@ -26,21 +24,40 @@ SAMPLING_TECHNIQUES = {
     'REWEIGHTED_GRAPH_SMOTE': 'REWEIGHTED_GRAPH_SMOTE'
 }
 
-# Added the new ratio_1to100 ratio
 RATIOS = ['original', 'ratio_1to100', 'ratio_1to10', 'ratio_1to2', 'ratio_1to1']
+
+
+RATIO_DISPLAY = {
+    'original': 'Original',
+    'ratio_1to100': '1:100 (Ratio)',
+    'ratio_1to10': '1:10 (Ratio)',
+    'ratio_1to2': '1:2 (Ratio)',
+    'ratio_1to1': '1:1 (Ratio)'
+}
+
+METHOD_SAMPLING_MAP = {
+    'INTRINSIC': ['NONE', 'RUS', 'SMOTE'],
+    'POSITIONAL': ['NONE', 'RUS', 'SMOTE'],
+    'DEEPWALK': ['NONE', 'RUS', 'SMOTE'],
+    'NODE2VEC': ['NONE', 'RUS', 'SMOTE'],
+    'GCN': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
+    'SAGE': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
+    'GAT': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
+    'GIN': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
+}
 
 def infer_metadata(path: Path):
     name = path.name
+  
     stem = name[:-12] if name.endswith('_summary.txt') else (name[:-4] if name.endswith('.txt') else name)
     
-    # 1. 識別資料集
+  
     dataset = 'unknown'
     for d_tag in DATASET_MAP.keys():
         if d_tag in path.name:
             dataset = d_tag
             break
             
-    # 2. 識別模型方法
     method = 'UNKNOWN'
     stem_upper = stem.upper()
     for m in METHODS:
@@ -48,27 +65,23 @@ def infer_metadata(path: Path):
             method = m
             break
             
-    # 3. 識別比例 (ordered longest to shortest to prevent partial matching)
     ratio = 'original'
     for r in sorted(RATIOS, key=len, reverse=True):
         if r in stem:
             ratio = r
             break
             
-    # 4. 識別採樣技術
     sampling = 'NONE'
     for s in ['reweighted_graph_smote', 'graph_ensemble_smote', 'graph_smote', 'smote', 'rus']:
         if s in stem:
             sampling = s.upper()
             break
             
-    # 5. 識別指標類型
     if 'F1_99' in stem_upper:
         metric_type = 'F1_99'
     else:
         metric_type = 'AUC-PRC'
         
-    # 6. 識別是否為 Tuned
     is_tuned = 'tuned' in str(path.parent) or 'tuned' in path.name
     return method, dataset, ratio, sampling, metric_type, is_tuned
 
@@ -77,21 +90,6 @@ def parse_metrics(path: Path, metric_type: str):
         content = path.read_text(encoding='utf-8').strip()
         if not content:
             return None
-        
-        # 1. 如果是 summary 檔案，提取對應指標的 "0.XXXXXX ± 0.YYYYYY"
-        if path.name.endswith('_summary.txt'):
-            for line in content.splitlines():
-                if ':' in line:
-                    key, val = line.split(':', 1)
-                    if metric_type == 'AUC-PRC' and 'AUC-PRC' in key.strip().upper():
-                        return val.strip()
-                    elif metric_type == 'F1_99' and 'F1_99' in key.strip().upper():
-                        return val.strip()
-            # 兜底：如果檔案只有單行
-            if ':' not in content and '±' in content:
-                return content.strip()
-                
-        # 2. 如果是單次運行檔案，解析 "AUC-PRC: 0.XXXX, F1_99: 0.YYYY"
         tokens = content.split(',')
         for token in tokens:
             if ':' in token:
@@ -101,7 +99,8 @@ def parse_metrics(path: Path, metric_type: str):
                     return val.strip()
                 elif metric_type == 'F1_99' and 'F1_99' in key_clean:
                     return val.strip()
-        # 兜底：如果檔案只有單個數值
+                    
+        # Fallback: If no key-value pair is found, check if the content is a single numeric value
         if len(content) < 30 and ':' not in content:
             try:
                 float(content)
@@ -120,6 +119,21 @@ def clean_val(val_str):
         return float(match.group(1))
     return None
 
+def format_cell_value(val):
+    if not val or val == 'N/A' or val == '-':
+        return '-'
+    match = re.match(r'^\s*([0-9\.]+)\s*±\s*([0-9\.]+)\s*$', str(val))
+    if match:
+        mean_val = float(match.group(1))
+        std_val = float(match.group(2))
+        return f"{mean_val:.4f} ± {std_val:.4f}"
+    try:
+        f_val = float(val)
+        return f"{f_val:.4f}"
+    except ValueError:
+        pass
+    return str(val)
+
 def main():
     res_dir = Path('res')
     if not res_dir.exists():
@@ -129,7 +143,8 @@ def main():
     tables_dir = Path('tables')
     tables_dir.mkdir(exist_ok=True)
     
-    matrix = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))))
+    # matrix[metric_type][dataset][sampling][method][ratio] = value
+    matrix = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dict))))
     
     all_files = list(res_dir.glob('**/*.txt'))
     print(f"Total files found in res/: {len(all_files)}")
@@ -138,115 +153,79 @@ def main():
         if path.name.startswith('.'):
             continue
         method, dataset, ratio, sampling, metric_type, is_tuned = infer_metadata(path)
+            
         if dataset in DATASET_MAP and method in METHODS:
             val = parse_metrics(path, metric_type)
             if val:
                 is_summary = path.name.endswith('_summary.txt')
-                current_val = matrix[is_tuned][metric_type][dataset][sampling][method].get(ratio)
+                current_val = matrix[metric_type][dataset][sampling][method].get(ratio)
                 if not current_val or is_summary or ('±' not in str(current_val) and '±' in str(val)):
-                    matrix[is_tuned][metric_type][dataset][sampling][method][ratio] = val
+                    matrix[metric_type][dataset][sampling][method][ratio] = val
 
-    # Model and sampling capability compatibility map (to keep tables neat)
-    METHOD_SAMPLING_MAP = {
-        'INTRINSIC': ['NONE', 'RUS', 'SMOTE'],
-        'POSITIONAL': ['NONE', 'RUS', 'SMOTE'],
-        'DEEPWALK': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
-        'NODE2VEC': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
-        'GCN': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
-        'SAGE': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
-        'GAT': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
-        'GIN': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE']
-    }
-
-    # ========== 1. Output Baseline & Tuned tables with new Model x Sampling vertical structure ==========
-    for is_tuned, folder_name in [(False, "baseline"), (True, "tuned")]:
-        for m_type in ['AUC-PRC', 'F1_99']:
-            output_lines = []
-            output_lines.append(f"# {folder_name.upper()} Resampling Ratio Impact Analysis Matrix ({m_type})\n")
-            
-            for d_key in sorted(DATASET_MAP.keys()):
-                d_name = DATASET_MAP[d_key]
-                output_lines.append(f"## Dataset: {d_name}\n")
-                
-                headers = ['Method', 'Sampling Technique', 'Original', 'Ratio 1:100', 'Ratio 1:10', 'Ratio 1:2', 'Ratio 1:1']
-                output_lines.append('| ' + ' | '.join(headers) + ' |')
-                output_lines.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
-                
-                for method in METHODS:
-                    samplings = METHOD_SAMPLING_MAP[method]
-                    # Find maximum values for bolding the best performer of this method
-                    vals_to_compare = []
-                    for s_key in samplings:
-                        for ratio in RATIOS:
-                            val_str = matrix[is_tuned][m_type][d_key][s_key][method].get(ratio)
-                            num = clean_val(val_str)
-                            if num is not None:
-                                vals_to_compare.append(num)
-                    max_val = max(vals_to_compare) if vals_to_compare else -1.0
-                    
-                    for idx_s, s_key in enumerate(samplings):
-                        row_cells = []
-                        # Row header span
-                        if idx_s == 0:
-                            row_cells.append(f"**{method}**")
-                        else:
-                            row_cells.append("")
-                        row_cells.append(s_key)
-                        
-                        for ratio in RATIOS:
-                            val_str = matrix[is_tuned][m_type][d_key][s_key][method].get(ratio, '-')
-                            num = clean_val(val_str)
-                            if num is not None and num >= max_val and max_val > 0:
-                                row_cells.append(f"**{val_str}**")
-                            else:
-                                row_cells.append(val_str)
-                        output_lines.append('| ' + ' | '.join(row_cells) + ' |')
-                    output_lines.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
-                output_lines.append("\n\n")
-                
-            output_file = tables_dir / f"ratio_comparison_tables_{folder_name}_{m_type.lower().replace('-', '_')}.md"
-            output_file.write_text('\n'.join(output_lines), encoding='utf-8')
-            print(f"[Success] Saved {folder_name} {m_type} table to: {output_file}")
-
-    # ========== 2. Output Ablation Comparison tables (Baseline vs Tuned) ==========
+    sorted_datasets = ['elliptic', 'hi_small', 'hi_medium', 'li_small', 'li_medium']
+    
     for m_type in ['AUC-PRC', 'F1_99']:
-        comparison_lines = []
-        comparison_lines.append(f"# Ablation Study & Parameter Tuning Comparison ({m_type})\n")
-        comparison_lines.append("This table contrasts the **Baseline (LR=0.05, No Clip)** vs **Tuned (LR=0.001, Gradient Clip)** settings across ratios.\n")
+        output_lines = []
+        output_lines.append("Method X Sampling Table (LR=0.001, Gradient Clipping=1.0)\n")
         
-        for d_key in sorted(DATASET_MAP.keys()):
-            d_name = DATASET_MAP[d_key]
-            comparison_lines.append(f"## Dataset: {d_name}\n")
+        for ratio in RATIOS:
+            ratio_title = RATIO_DISPLAY[ratio]
+            output_lines.append(f"## 評估設定比例: {ratio_title}\n")
             
-            for ratio in RATIOS:
-                ratio_title = "Original" if ratio == 'original' else f"Ratio 1:{ratio.split('_1to')[-1]}"
-                comparison_lines.append(f"### Comparison under {ratio_title}\n")
+            # build the table header
+            headers = ['Method', 'Sampling', 'ELLIPTIC', 'IBM HI-SMALL', 'IBM HI-MEDIUM', 'IBM LI-SMALL', 'IBM LI-MEDIUM']
+            output_lines.append('| ' + ' | '.join(headers) + ' |')
+            output_lines.append('| ' + ' | '.join([':---', ':---', ':---:', ':---:', ':---:', ':---:', ':---:']) + ' |')
+            
+            for method in METHODS:
+                samplings = METHOD_SAMPLING_MAP.get(method, [])
                 
-                headers = ['Method', 'Sampling Technique', 'Baseline (No Clip, LR=0.05)', 'Tuned (Clip=1.0, LR=0.001)', 'Absolute Lift']
-                comparison_lines.append('| ' + ' | '.join(headers) + ' |')
-                comparison_lines.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
-                
-                for method in METHODS:
-                    samplings = METHOD_SAMPLING_MAP[method]
+                # calculate the maximum value for each dataset column to highlight the best performance
+                col_max_vals = {}
+                for d_key in sorted_datasets:
+                    vals_for_dataset = []
                     for s_key in samplings:
-                        val_base = matrix[False][m_type][d_key][s_key][method].get(ratio, '-')
-                        val_tuned = matrix[True][m_type][d_key][s_key][method].get(ratio, '-')
-                        if val_base == '-' and val_tuned == '-':
-                            continue
-                        float_base = clean_val(val_base)
-                        float_tuned = clean_val(val_tuned)
-                        if float_base is not None and float_tuned is not None:
-                            diff = float_tuned - float_base
-                            sign = "+" if diff >= 0 else ""
-                            lift_str = f"**{sign}{diff:.4f}**"
-                        else:
-                            lift_str = "N/A"
-                        comparison_lines.append(f"| **{method}** | {s_key} | {val_base} | {val_tuned} | {lift_str} |")
-                comparison_lines.append("\n")
+                        val = matrix[m_type][d_key][s_key][method].get(ratio)
+                        f_val = clean_val(val)
+                        if f_val is not None:
+                            vals_for_dataset.append(f_val)
+                    col_max_vals[d_key] = max(vals_for_dataset) if vals_for_dataset else -1.0
                 
-        output_file = tables_dir / f"ablation_comparison_{m_type.lower().replace('-', '_')}.md"
-        output_file.write_text('\n'.join(comparison_lines), encoding='utf-8')
-        print(f"[Success] Saved Ablation Comparison Table to: {output_file}")
+                for idx, s_key in enumerate(samplings):
+                    s_name = SAMPLING_TECHNIQUES.get(s_key, s_key)
+                    s_display = "None (Baseline)" if s_key == 'NONE' else s_name
+                    
+                    row_cells = []
+                    # only display the method name for the first sampling technique row
+                    if idx == 0:
+                        row_cells.append(f"**{method}**")
+                    else:
+                        row_cells.append("")
+                        
+                    row_cells.append(s_display)
+                    
+                    # populate the performance values for each dataset
+                    for d_key in sorted_datasets:
+                        val = matrix[m_type][d_key][s_key][method].get(ratio)
+                        formatted_val = format_cell_value(val)
+                        
+                        f_val = clean_val(val)
+                        max_val_for_col = col_max_vals[d_key]
+                        
+                        # emphasize the best value in the column (dataset) for this method and ratio
+                        if f_val is not None and max_val_for_col > 0 and abs(f_val - max_val_for_col) < 1e-7:
+                            formatted_val = f"**{formatted_val}**"
+                        row_cells.append(formatted_val)
+                        
+                    output_lines.append('| ' + ' | '.join(row_cells) + ' |')
+            
+                output_lines.append('| | | | | | | |')
+                
+            output_lines.append("\n---\n")
+            
+        output_file = tables_dir / f"tuned_only_ratio_comparison_{m_type.lower().replace('-', '_')}.md"
+        output_file.write_text('\n'.join(output_lines), encoding='utf-8')
+        print(f"[Success] Saved Tuned-Only {m_type} table to: {output_file}")
 
 if __name__ == "__main__":
     main()

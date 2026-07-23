@@ -113,7 +113,6 @@ if __name__ == "__main__":
         print(f"TUNED PHASE: Testing Class Imbalance Ratio: {ratio_tag.upper()} with LR={args.lr}")
         print("="*80)
 
-        # 這裡不再調用 adjust_mask_to_ratio 預先剪枝，完全交給採樣演算法內部處理
         train_mask_ratio = train_mask.clone()
 
         for method in to_train:
@@ -125,7 +124,7 @@ if __name__ == "__main__":
                 samp_tag = '' if sampling == 'none' else f'_rus' if sampling == 'random_undersample' else f'_{sampling}'
                 seed_tag = f"_seed{args.seed}" if args.seed is not None else ""
                 
-                # 檔案與 checkpoint 統一加上 _tuned 標記並寫入 res/tuned/
+                # file and checkpoint paths are unified with _tuned suffix and written to res/tuned/
                 result_tag = f"{ntw_name}_{ratio_tag}{samp_tag}{seed_tag}_tuned"
                 checkpoint_dir = f"{args.out_dir}/checkpoints"
                 os.makedirs(checkpoint_dir, exist_ok=True)
