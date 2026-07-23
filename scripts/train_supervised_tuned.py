@@ -99,8 +99,8 @@ if __name__ == "__main__":
     method_sampling_techniques = {
         "intrinsic": ["none", "random_undersample", "smote"],
         "positional": ["none", "random_undersample", "smote"],
-        "deepwalk": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],
-        "node2vec": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],
+        "deepwalk": ["none", "random_undersample", "smote"],
+        "node2vec": ["none", "random_undersample", "smote"],
         "gcn": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],
         "sage": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],
         "gat": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"],

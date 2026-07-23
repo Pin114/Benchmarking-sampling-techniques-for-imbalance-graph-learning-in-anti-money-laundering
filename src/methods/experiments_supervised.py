@@ -37,15 +37,15 @@ def intrinsic_features(
     else:
         train_mask_sampled = train_mask.bool().to(device_decoder)
 
-    # 【防禦補丁】：切片時，強制將 Mask 降回 CPU 與 features_tensor 對齊
+    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵矩陣與原始 test_mask 長度不符拋出 IndexError 
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
-    X_test = features_tensor[test_mask.bool().cpu()].to(device_decoder)
-    y_test = y_tensor[test_mask.bool().cpu()].to(device_decoder)
+    X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
+    y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
 
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
+
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
@@ -63,7 +63,6 @@ def intrinsic_features(
     decoder.eval()
     y_pred = decoder(X_test)
     y_pred = y_pred.softmax(dim=1)
-    
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
     y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
@@ -86,15 +85,15 @@ def intrinsic_features_with_predictions(
     else:
         train_mask_sampled = train_mask.bool().to(device_decoder)
 
-    # 【防禦補丁】：切片時，強制將 Mask 降回 CPU 與 features_tensor 對齊，徹底破除卡死的 RuntimeError
+    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵矩陣與原始 test_mask 長度不符拋出 IndexError
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
-    X_test = features_tensor[test_mask.bool().cpu()].to(device_decoder)
-    y_test = y_tensor[test_mask.bool().cpu()].to(device_decoder)
+    X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
+    y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
 
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
+
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
@@ -112,15 +111,11 @@ def intrinsic_features_with_predictions(
     decoder.eval()
     y_pred = decoder(X_test)
     y_pred = y_pred.softmax(dim=1)
-    
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
 
 def positional_features(
-    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float,
-    fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2,
-    hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, percentile_q: int = 99,
-    ratio=None, sampling="none"
+    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float, fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2, hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, percentile_q: int = 99, ratio=None, sampling="none"
 ):
     print("intrinsic and summary: ")
     X = ntw.get_features(full=True)
@@ -130,18 +125,17 @@ def positional_features(
     print("networkit: ")
     ntw_nk = ntw.get_network_nk()
     features_nk_df = features_nk(ntw_nk, ntw_name=ntw_name)
-    
+
     if use_intrinsic:
         features_df = pd.concat([X, features_nx_df, features_nk_df], axis=1)
     else:
         features_df = pd.concat([features_nx_df, features_nk_df], axis=1)
-        
+
     features_df["fraud"] = [fraud_dict_test[x] for x in features_df.index]
-    
+
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    
     x_features = features_df.drop(["PSP", "fraud"], axis=1, errors='ignore').values
     features_tensor = torch.tensor(x_features, dtype=torch.float32)
     y_tensor = torch.tensor(features_df["fraud"].values, dtype=torch.long)
@@ -153,15 +147,15 @@ def positional_features(
     else:
         train_mask_sampled = train_mask.bool()
 
+    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵矩陣與原始 test_mask 長度不符拋出 IndexError
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
-    X_test = features_tensor[test_mask.bool().cpu()].to(device_decoder)
-    y_test = y_tensor[test_mask.bool().cpu()].to(device_decoder)
+    X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
+    y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
 
-    # 【修復拼寫 Bug】：將 x_train 改為正確的大寫 X_train
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
+
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
@@ -179,7 +173,6 @@ def positional_features(
     decoder.eval()
     y_pred = decoder(X_test)
     y_pred = y_pred.softmax(dim=1)
-    
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
     y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
@@ -187,9 +180,7 @@ def positional_features(
     return (ap_score, f1)
 
 def positional_features_with_predictions(
-    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float,
-    fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2,
-    hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, ratio=None, sampling="none"
+    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float, fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2, hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, ratio=None, sampling="none"
 ):
     print("intrinsic and summary: ")
     X = ntw.get_features(full=True)
@@ -199,18 +190,17 @@ def positional_features_with_predictions(
     print("networkit: ")
     ntw_nk = ntw.get_network_nk()
     features_nk_df = features_nk(ntw_nk, ntw_name=ntw_name)
-    
+
     if use_intrinsic:
         features_df = pd.concat([X, features_nx_df, features_nk_df], axis=1)
     else:
         features_df = pd.concat([features_nx_df, features_nk_df], axis=1)
-        
+
     features_df["fraud"] = [fraud_dict_test[x] for x in features_df.index]
-    
+
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    
     x_features = features_df.drop(["PSP", "fraud"], axis=1, errors='ignore').values
     features_tensor = torch.tensor(x_features, dtype=torch.float32)
     y_tensor = torch.tensor(features_df["fraud"].values, dtype=torch.long)
@@ -222,15 +212,15 @@ def positional_features_with_predictions(
     else:
         train_mask_sampled = train_mask.bool()
 
+    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵矩陣與原始 test_mask 長度不符拋出 IndexError
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
-    X_test = features_tensor[test_mask.bool().cpu()].to(device_decoder)
-    y_test = y_tensor[test_mask.bool().cpu()].to(device_decoder)
+    X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
+    y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
 
-    # 【修復拼寫 Bug】：將 x_train 改為正確的大寫 X_train
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
+
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
@@ -248,14 +238,11 @@ def positional_features_with_predictions(
     decoder.eval()
     y_pred = decoder(X_test)
     y_pred = y_pred.softmax(dim=1)
-    
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
 
 def node2vec_features(
-    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node,
-    num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False,
-    use_intrinsic=True, percentile_q=99, ratio=None, sampling="none"
+    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, percentile_q=99, ratio=None, sampling="none"
 ):
     if use_torch:
         active_nodes = (train_mask.bool() | test_mask.bool())
@@ -282,15 +269,13 @@ def node2vec_features(
         graph_for_n2v = ntw_torch
 
     model_n2v = node2vec_representation_torch(
-        graph_for_n2v, train_mask=train_mask, test_mask=test_mask, embedding_dim=embedding_dim,
-        walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node,
-        num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
+        graph_for_n2v, train_mask=train_mask, test_mask=test_mask, embedding_dim=embedding_dim, walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node, num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
     )
     model_n2v.eval()
     x = model_n2v()
     x = x.detach().to('cpu')
     x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
-    
+
     if active_nodes.any() and active_idx is not None and x.shape[0] != ntw_torch.num_nodes:
         x_full = torch.zeros((ntw_torch.num_nodes, x.shape[1]), dtype=x.dtype)
         x_full[active_idx] = x
@@ -298,16 +283,18 @@ def node2vec_features(
 
     x_intrinsic = ntw_torch.x.detach().to('cpu')
     x_intrinsic = torch.nan_to_num(x_intrinsic, nan=0.0, posinf=1e5, neginf=-1e5)
+
     if use_intrinsic:
         x = torch.cat((x, x_intrinsic), 1)
 
     y_tensor = ntw_torch.y.cpu()
-    
+
     if sampling == "random_undersample" and ratio is not None:
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio)
     elif sampling == "smote" and ratio is not None:
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio)
     elif sampling in ["graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"] and ratio is not None:
+        # Fallback to feature SMOTE inside decoder
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio)
     else:
         train_mask_sampled = train_mask.bool()
@@ -315,15 +302,16 @@ def node2vec_features(
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    
+
+    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵與測試集遮罩長度不符
     x_train = x[train_mask_sampled.cpu()].to(device_decoder).squeeze()
-    x_test = x[test_mask.bool().cpu()].to(device_decoder).squeeze()
+    x_test = x[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder).squeeze()
-    y_test = ntw_torch.y[test_mask.bool().cpu()].to(device_decoder).squeeze()
+    y_test = ntw_torch.y[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
 
     decoder = Decoder_deep_norm(x_train.shape[1], 2, 10).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
+
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
@@ -341,7 +329,6 @@ def node2vec_features(
     decoder.eval()
     y_pred = decoder(x_test)
     y_pred = y_pred.softmax(dim=1)
-    
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
     y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
@@ -349,9 +336,7 @@ def node2vec_features(
     return (ap_score, f1)
 
 def node2vec_features_with_predictions(
-    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node,
-    num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False,
-    use_intrinsic=True, ratio=None, sampling="none"
+    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, ratio=None, sampling="none"
 ):
     if use_torch:
         active_nodes = (train_mask.bool() | test_mask.bool())
@@ -378,15 +363,13 @@ def node2vec_features_with_predictions(
         graph_for_n2v = ntw_torch
 
     model_n2v = node2vec_representation_torch(
-        graph_for_n2v, train_mask=train_mask, test_mask=test_mask, embedding_dim=embedding_dim,
-        walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node,
-        num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
+        graph_for_n2v, train_mask=train_mask, test_mask=test_mask, embedding_dim=embedding_dim, walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node, num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
     )
     model_n2v.eval()
     x = model_n2v()
     x = x.detach().to('cpu')
     x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
-    
+
     if active_nodes.any() and active_idx is not None and x.shape[0] != ntw_torch.num_nodes:
         x_full = torch.zeros((ntw_torch.num_nodes, x.shape[1]), dtype=x.dtype)
         x_full[active_idx] = x
@@ -394,11 +377,12 @@ def node2vec_features_with_predictions(
 
     x_intrinsic = ntw_torch.x.detach().to('cpu')
     x_intrinsic = torch.nan_to_num(x_intrinsic, nan=0.0, posinf=1e5, neginf=-1e5)
+
     if use_intrinsic:
         x = torch.cat((x, x_intrinsic), 1)
 
     y_tensor = ntw_torch.y.cpu()
-    
+
     if sampling == "random_undersample" and ratio is not None:
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio)
     elif sampling == "smote" and ratio is not None:
@@ -411,15 +395,16 @@ def node2vec_features_with_predictions(
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    
+
+    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵與測試集遮罩長度不符
     x_train = x[train_mask_sampled.cpu()].to(device_decoder).squeeze()
-    x_test = x[test_mask.bool().cpu()].to(device_decoder).squeeze()
+    x_test = x[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder).squeeze()
-    y_test = ntw_torch.y[test_mask.bool().cpu()].to(device_decoder).squeeze()
+    y_test = ntw_torch.y[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
 
     decoder = Decoder_deep_norm(x_train.shape[1], 2, 10).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
+
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
@@ -437,16 +422,11 @@ def node2vec_features_with_predictions(
     decoder.eval()
     y_pred = decoder(x_test)
     y_pred = y_pred.softmax(dim=1)
-    
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
 
 def GNN_features(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None,
-    val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
-    val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
-    percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt",
-    monitor: str = 'val_ap', ratio=None, sampling="none"
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none"
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -454,11 +434,12 @@ def GNN_features(
     early_stopping = EarlyStopping(
         patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
     )
-
     y_tensor = ntw_torch.y.cpu()
+
     if sampling == "random_undersample" and ratio is not None:
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio).to(device)
     elif sampling == "smote" and ratio is not None:
+        # Fallback to feature smote if GNN_features is called with smote
         x_np, y_np, train_mask_np = smote_mask(train_mask.bool(), ntw_torch.x, ntw_torch.y, ratio=ratio)
         ntw_torch = ntw_torch.clone()
         ntw_torch.x = x_np.to(device)
@@ -468,7 +449,8 @@ def GNN_features(
         train_mask_sampled = train_mask.bool().to(device)
 
     def _mask_to_device(mask):
-        if mask is None: return None
+        if mask is None:
+            return None
         return mask.bool().to(device)
 
     def _forward(x, edge_index):
@@ -504,17 +486,19 @@ def GNN_features(
             out, _ = _forward(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
             y = ntw_torch.y.long().to(device)
             mask_dev = _mask_to_device(mask)
-            out = out[mask_dev]
-            y = y[mask_dev]
-            if out.shape[0] == 0: return None
-            criterion = _build_weighted_criterion(y)
-            loss = criterion(out, y).item()
-            y_hat = out.softmax(dim=1)
+            # 【安全防禦切片】：避免 Feature SMOTE 時，GNN預測與原始驗證/測試集遮罩長度不符
+            out_filtered = out[:mask_dev.shape[0]][mask_dev]
+            y_filtered = y[:mask_dev.shape[0]][mask_dev]
+            if out_filtered.shape[0] == 0:
+                return None
+            criterion = _build_weighted_criterion(y_filtered)
+            loss = criterion(out_filtered, y_filtered).item()
+            y_hat = out_filtered.softmax(dim=1)
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
-            ap_score = average_precision_score(y.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
+            ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
             cutoff = np.percentile(y_hat.cpu().numpy()[:, 1], percentile_q)
             y_pred_hard = (y_hat.cpu().numpy()[:, 1] >= cutoff).astype(int)
-            f1 = f1_score(y.cpu().numpy(), y_pred_hard)
+            f1 = f1_score(y_filtered.cpu().numpy(), y_pred_hard)
             return {'loss': loss, 'ap': ap_score, 'f1': f1}
 
     for epoch in range(n_epochs):
@@ -535,11 +519,7 @@ def GNN_features(
     return test_result['ap'], test_result['f1']
 
 def GNN_features_with_predictions(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None,
-    val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
-    val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
-    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap',
-    ratio=None, sampling="none"
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none"
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -547,8 +527,8 @@ def GNN_features_with_predictions(
     early_stopping = EarlyStopping(
         patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
     )
-
     y_tensor = ntw_torch.y.cpu()
+
     if sampling == "random_undersample" and ratio is not None:
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio).to(device)
     elif sampling == "smote" and ratio is not None:
@@ -561,7 +541,8 @@ def GNN_features_with_predictions(
         train_mask_sampled = train_mask.bool().to(device)
 
     def _mask_to_device(mask):
-        if mask is None: return None
+        if mask is None:
+            return None
         return mask.bool().to(device)
 
     def _forward(x, edge_index):
@@ -597,15 +578,17 @@ def GNN_features_with_predictions(
             out, _ = _forward(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
             y = ntw_torch.y.long().to(device)
             mask_dev = _mask_to_device(mask)
-            out = out[mask_dev]
-            y = y[mask_dev]
-            if out.shape[0] == 0: return None
-            criterion = _build_weighted_criterion(y)
-            loss = criterion(out, y).item()
-            y_hat = out.softmax(dim=1)
+            # 【安全防禦切片】：避免 Feature SMOTE 時，GNN預測與原始驗證/測試集遮罩長度不符
+            out_filtered = out[:mask_dev.shape[0]][mask_dev]
+            y_filtered = y[:mask_dev.shape[0]][mask_dev]
+            if out_filtered.shape[0] == 0:
+                return None
+            criterion = _build_weighted_criterion(y_filtered)
+            loss = criterion(out_filtered, y_filtered).item()
+            y_hat = out_filtered.softmax(dim=1)
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
-            ap_score = average_precision_score(y.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
-            return {'loss': loss, 'ap': ap_score, 'output': y_hat, 'y': y}
+            ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
+            return {'loss': loss, 'ap': ap_score, 'output': y_hat, 'y': y_filtered}
 
     for epoch in range(n_epochs):
         train_loss = train_epoch()
@@ -625,12 +608,7 @@ def GNN_features_with_predictions(
     return test_result['ap'], test_result['output'].cpu().numpy()[:, 1], test_result['y'].cpu().numpy()
 
 def GNN_features_graphsmote(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None,
-    val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
-    val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
-    k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote",
-    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt",
-    monitor: str = 'val_ap', ratio=None
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -646,7 +624,8 @@ def GNN_features_graphsmote(
         return nn.CrossEntropyLoss(weight=weight_tensor)
 
     def _mask_to_device(mask):
-        if mask is None: return None
+        if mask is None:
+            return None
         return mask.bool().to(device)
 
     def _forward(x, edge_index, edge_attr=None):
@@ -710,7 +689,8 @@ def GNN_features_graphsmote(
             mask_dev = _mask_to_device(mask)
             out = out[mask_dev]
             y = y[mask_dev]
-            if out.shape[0] == 0: return None
+            if out.shape[0] == 0:
+                return None
             criterion = _build_weighted_criterion(y)
             loss = criterion(out, y).item()
             y_hat = out.softmax(dim=1)
@@ -739,12 +719,7 @@ def GNN_features_graphsmote(
     return test_result['ap'], test_result['f1']
 
 def GNN_features_graphsmote_with_predictions(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None,
-    val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None,
-    val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True,
-    k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote",
-    patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt",
-    monitor: str = 'val_ap', ratio=None
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -760,7 +735,8 @@ def GNN_features_graphsmote_with_predictions(
         return nn.CrossEntropyLoss(weight=weight_tensor)
 
     def _mask_to_device(mask):
-        if mask is None: return None
+        if mask is None:
+            return None
         return mask.bool().to(device)
 
     def _forward(x, edge_index, edge_attr=None):
@@ -824,7 +800,8 @@ def GNN_features_graphsmote_with_predictions(
             mask_dev = _mask_to_device(mask)
             out = out[mask_dev]
             y = y[mask_dev]
-            if out.shape[0] == 0: return None
+            if out.shape[0] == 0:
+                return None
             criterion = _build_weighted_criterion(y)
             loss = criterion(out, y).item()
             y_hat = out.softmax(dim=1)
