@@ -46,9 +46,19 @@ def features_nx_calculations(G_nx):
     return features_df
 
 def features_nx(G_nx, ntw_name):
+    # [SUBGRAPH SUPPORT] Get current graph nodes
+    graph_nodes = set(G_nx.nodes())
+    
     location = 'res/' + ntw_name + '_features_nx.csv'
     try:
         features_df = pd.read_csv(location, index_col=0)
+        # [SUBGRAPH SUPPORT] Validate cached features match current graph
+        cached_nodes = set(features_df.index)
+        if cached_nodes != graph_nodes:
+            print(f"[features_nx] WARNING: Cache node mismatch for '{ntw_name}'. Cached: {len(cached_nodes)}, Graph: {len(graph_nodes)}")
+            print(f"  Extra in cache: {len(cached_nodes - graph_nodes)}, Missing from cache: {len(graph_nodes - cached_nodes)}")
+            # Recalculate to match current graph
+            raise FileNotFoundError("Cache node mismatch - recalculating")
     except FileNotFoundError:
         features_df = features_nx_calculations(G_nx)
         try:

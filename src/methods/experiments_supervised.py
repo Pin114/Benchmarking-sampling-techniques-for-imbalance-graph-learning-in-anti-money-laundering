@@ -21,48 +21,47 @@ import os
 import numpy as np
 import pandas as pd
 
-# =====================================================================
-# 1. Intrinsic Features (With and Without Predictions)
-# =====================================================================
-
 def intrinsic_features(
-    ntw, train_mask, val_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder, ratio=None, sampling="none", percentile_q=99, patience=10, checkpoint_path="res/checkpoints/best_model_intrinsic_eval.pt"
+    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder, ratio=None, sampling="none", percentile_q=99, val_mask=None
 ):
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     y_tensor = torch.tensor(ntw.df_features['class'].values, dtype=torch.long)
     features_tensor = ntw.get_features_torch()
-    
     if sampling == "random_undersample" and ratio is not None:
         train_mask_sampled = random_undersample_mask(train_mask.bool().to(device_decoder), y_tensor.to(device_decoder), ratio=ratio)
     elif sampling == "smote" and ratio is not None:
         features_tensor, y_tensor, train_mask_sampled = smote_mask(train_mask.bool().to(device_decoder), features_tensor.to(device_decoder), y_tensor.to(device_decoder), ratio=ratio)
     else:
         train_mask_sampled = train_mask.bool().to(device_decoder)
-        
+
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
-    
-    X_val = features_tensor[val_mask.bool().cpu()].to(device_decoder)
-    y_val = y_tensor[val_mask.bool().cpu()].to(device_decoder)
-    
     X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
     y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
-    
+
+    if val_mask is not None:
+        X_val = features_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+        y_val = y_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+    else:
+        X_val, y_val = None, None
+
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
     weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
     criterion = nn.CrossEntropyLoss(weight=weight_tensor)
-    
-    early_stopping = EarlyStopping(
-        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor='val_ap'
-    )
-    
+
+    best_decoder_path = f"res/checkpoints/best_decoder_temp_{os.getpid()}_{np.random.randint(100000)}.pt"
+    os.makedirs("res/checkpoints", exist_ok=True)
+    if val_mask is not None:
+        early_stopping = EarlyStopping(patience=10, verbose=False, checkpoint_path=best_decoder_path, monitor='val_ap')
+    else:
+        early_stopping = None
+
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
@@ -70,69 +69,75 @@ def intrinsic_features(
         loss = criterion(output, y_train)
         loss.backward()
         optimizer.step()
-        
-        # Validation
-        decoder.eval()
-        with torch.no_grad():
-            val_output = decoder(X_val)
-            val_output_softmax = val_output.softmax(dim=1)
-            val_ap = average_precision_score(y_val.cpu().numpy(), val_output_softmax.cpu().numpy()[:,1])
-            
-        early_stopping(val_ap, decoder)
-        if early_stopping.early_stop:
-            break
-            
-    if os.path.exists(checkpoint_path):
-        decoder.load_state_dict(torch.load(checkpoint_path, map_location=device_decoder))
-        
+
+        if val_mask is not None:
+            decoder.eval()
+            with torch.no_grad():
+                val_output = decoder(X_val)
+                val_pred = val_output.softmax(dim=1)
+                val_ap = average_precision_score(y_val.cpu().numpy(), val_pred.cpu().numpy()[:, 1])
+            early_stopping(val_ap, decoder)
+            if early_stopping.early_stop:
+                break
+
+    if val_mask is not None and os.path.exists(best_decoder_path):
+        decoder.load_state_dict(torch.load(best_decoder_path, map_location=device_decoder))
+        try:
+            os.remove(best_decoder_path)
+        except Exception:
+            pass
+
     decoder.eval()
-    y_pred = decoder(X_test)
-    y_pred = y_pred.softmax(dim=1)
+    with torch.no_grad():
+        y_pred = decoder(X_test)
+        y_pred = y_pred.softmax(dim=1)
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
     y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
     f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
     return (ap_score, f1)
-
 
 def intrinsic_features_with_predictions(
-    ntw, train_mask, val_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder, ratio=None, sampling="none", patience=10, checkpoint_path="res/checkpoints/best_model_intrinsic_tuned.pt"
+    ntw, train_mask, test_mask, n_layers_decoder, hidden_dim_decoder, lr, n_epochs_decoder, ratio=None, sampling="none", val_mask=None
 ):
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     y_tensor = torch.tensor(ntw.df_features['class'].values, dtype=torch.long)
     features_tensor = ntw.get_features_torch()
-    
     if sampling == "random_undersample" and ratio is not None:
         train_mask_sampled = random_undersample_mask(train_mask.bool().to(device_decoder), y_tensor.to(device_decoder), ratio=ratio)
     elif sampling == "smote" and ratio is not None:
         features_tensor, y_tensor, train_mask_sampled = smote_mask(train_mask.bool().to(device_decoder), features_tensor.to(device_decoder), y_tensor.to(device_decoder), ratio=ratio)
     else:
         train_mask_sampled = train_mask.bool().to(device_decoder)
-        
+
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
-    
-    X_val = features_tensor[val_mask.bool().cpu()].to(device_decoder)
-    y_val = y_tensor[val_mask.bool().cpu()].to(device_decoder)
-    
     X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
     y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
-    
+
+    if val_mask is not None:
+        X_val = features_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+        y_val = y_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+    else:
+        X_val, y_val = None, None
+
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
     weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
     criterion = nn.CrossEntropyLoss(weight=weight_tensor)
-    
-    early_stopping = EarlyStopping(
-        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor='val_ap'
-    )
-    
+
+    best_decoder_path = f"res/checkpoints/best_decoder_temp_{os.getpid()}_{np.random.randint(100000)}.pt"
+    os.makedirs("res/checkpoints", exist_ok=True)
+    if val_mask is not None:
+        early_stopping = EarlyStopping(patience=10, verbose=False, checkpoint_path=best_decoder_path, monitor='val_ap')
+    else:
+        early_stopping = None
+
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
@@ -140,135 +145,121 @@ def intrinsic_features_with_predictions(
         loss = criterion(output, y_train)
         loss.backward()
         optimizer.step()
-        
-        # Validation
-        decoder.eval()
-        with torch.no_grad():
-            val_output = decoder(X_val)
-            val_output_softmax = val_output.softmax(dim=1)
-            val_ap = average_precision_score(y_val.cpu().numpy(), val_output_softmax.cpu().numpy()[:,1])
-            
-        early_stopping(val_ap, decoder)
-        if early_stopping.early_stop:
-            break
-            
-    if os.path.exists(checkpoint_path):
-        decoder.load_state_dict(torch.load(checkpoint_path, map_location=device_decoder))
-        
+
+        if val_mask is not None:
+            decoder.eval()
+            with torch.no_grad():
+                val_output = decoder(X_val)
+                val_pred = val_output.softmax(dim=1)
+                val_ap = average_precision_score(y_val.cpu().numpy(), val_pred.cpu().numpy()[:, 1])
+            early_stopping(val_ap, decoder)
+            if early_stopping.early_stop:
+                break
+
+    if val_mask is not None and os.path.exists(best_decoder_path):
+        decoder.load_state_dict(torch.load(best_decoder_path, map_location=device_decoder))
+        try:
+            os.remove(best_decoder_path)
+        except Exception:
+            pass
+
     decoder.eval()
-    y_pred = decoder(X_test)
-    y_pred = y_pred.softmax(dim=1)
+    with torch.no_grad():
+        y_pred = decoder(X_test)
+        y_pred = y_pred.softmax(dim=1)
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
-
-
-# =====================================================================
-# 2. Positional Features (With and Without Predictions)
-# =====================================================================
 
 def positional_features(
-    ntw, train_mask, val_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float, fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2, hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, percentile_q: int = 99, ratio=None, sampling="none", patience=10, checkpoint_path="res/checkpoints/best_model_pos_eval.pt"
+    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float, fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2, hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, percentile_q: int = 99, ratio=None, sampling="none", val_mask=None
 ):
     print("intrinsic and summary: ")
-    X_full_df = ntw.get_features(full=True)
-    
-    print("networkx (Full & Subgraph): ")
+    X = ntw.get_features(full=True)
+    print("networkx: ")
     ntw_nx_full = ntw.get_network_nx()
-    
-    # [Point 1: Subgraph isolation to completely block test set structure leakage]
-    train_val_mask = train_mask.bool() | val_mask.bool()
-    train_val_nodes = set(torch.where(train_val_mask)[0].tolist())
-    ntw_nx_train_val = ntw_nx_full.subgraph(list(train_val_nodes))
-    
-    # Calculate features on train-val subgraph
-    features_nx_df_train_val = local_features_nx(
-        ntw_nx_train_val, alpha_pr, alpha_ppr, 
-        fraud_dict_train=fraud_dict_train, 
-        ntw_name=ntw_name + "_train_val"
-    )
-    features_nk_df_train_val = features_nk(
-        ntw_nx_train_val, 
-        ntw_name=ntw_name + "_train_val_nk"
-    )
-    
-    if use_intrinsic:
-        X_train_val_df = X_full_df.loc[X_full_df.index.isin(features_nx_df_train_val.index)]
-        features_df_train_val = pd.concat([X_train_val_df, features_nx_df_train_val, features_nk_df_train_val], axis=1)
+
+    # Isolated computation for train+val subgraph to ensure zero data leakage
+    if val_mask is not None:
+        train_val_mask = train_mask.bool() | val_mask.bool()
     else:
-        features_df_train_val = pd.concat([features_nx_df_train_val, features_nk_df_train_val], axis=1)
-        
-    features_df_train_val["fraud"] = [fraud_dict_test[x] for x in features_df_train_val.index]
-    
-    # Map back to full-sized zeros to allow downstream masking code to work unmodified
-    N_nodes = int(ntw_nx_full.number_of_nodes())
-    x_features_train_val = features_df_train_val.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    D_features = x_features_train_val.shape[1]
-    
-    full_size_x_train_val = np.zeros((N_nodes, D_features), dtype=np.float32)
-    for idx, row in features_df_train_val.iterrows():
-        full_size_x_train_val[int(idx)] = row.drop(["PSP", "fraud"], errors='ignore').values
-        
-    features_tensor_train_val = torch.tensor(full_size_x_train_val, dtype=torch.float32)
-    y_tensor_train_val = torch.tensor([fraud_dict_test.get(i, 0) for i in range(N_nodes)], dtype=torch.long)
-    
-    # Calculate features on full graph for validation/test evaluation
-    features_nx_df_full = local_features_nx(
-        ntw_nx_full, alpha_pr, alpha_ppr, 
-        fraud_dict_train=fraud_dict_train, 
-        ntw_name=ntw_name + "_full"
-    )
-    ntw_nk_full = ntw.get_network_nk()
-    features_nk_df_full = features_nk(
-        ntw_nk_full, 
-        ntw_name=ntw_name + "_full_nk"
-    )
-    
+        train_val_mask = train_mask.bool()
+    train_val_nodes = torch.where(train_val_mask)[0].cpu().numpy().tolist()
+    train_val_nodes_set = set(train_val_nodes)
+
+    ntw_nx_sub = ntw_nx_full.subgraph(train_val_nodes)
+    fraud_dict_train_sub = {k: v for k, v in fraud_dict_train.items() if k in train_val_nodes_set} if fraud_dict_train else None
+
+    # We cache subgraphs and full graphs separately with distinct file names
+    features_nx_sub = local_features_nx(ntw_nx_sub, alpha_pr, alpha_ppr, fraud_dict_train=fraud_dict_train_sub, ntw_name=f"{ntw_name}_train_val")
+    features_nk_sub = features_nk(ntw_nx_sub, ntw_name=f"{ntw_name}_train_val")
+
     if use_intrinsic:
-        features_df_full = pd.concat([X_full_df, features_nx_df_full, features_nk_df_full], axis=1)
+        features_sub_df = pd.concat([X.loc[train_val_nodes], features_nx_sub, features_nk_sub], axis=1)
     else:
-        features_df_full = pd.concat([features_nx_df_full, features_nk_df_full], axis=1)
-        
-    features_df_full["fraud"] = [fraud_dict_test[x] for x in features_df_full.index]
-    
-    x_features_full = features_df_full.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    features_tensor_full = torch.tensor(x_features_full, dtype=torch.float32)
-    y_tensor_full = torch.tensor(features_df_full["fraud"].values, dtype=torch.long)
-    
+        features_sub_df = pd.concat([features_nx_sub, features_nk_sub], axis=1)
+
+    # Full graph computation for test nodes evaluation
+    features_nx_full = local_features_nx(ntw_nx_full, alpha_pr, alpha_ppr, fraud_dict_train=fraud_dict_train, ntw_name=f"{ntw_name}_full")
+    features_nk_full = features_nk(ntw_nx_full, ntw_name=f"{ntw_name}_full")
+
+    if use_intrinsic:
+        features_full_df = pd.concat([X, features_nx_full, features_nk_full], axis=1)
+    else:
+        features_full_df = pd.concat([features_nx_full, features_nk_full], axis=1)
+
+    features_full_df["fraud"] = [fraud_dict_test[x] for x in features_full_df.index]
+    features_sub_df["fraud"] = [fraud_dict_test[x] for x in features_sub_df.index]
+
+    # Align sub-computed features back to full dimensions with zero-fill for test
+    features_sub_aligned = pd.DataFrame(0.0, index=features_full_df.index, columns=features_full_df.columns)
+    features_sub_aligned.loc[train_val_nodes] = features_sub_df.loc[train_val_nodes]
+
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    
+
+    x_features_train_val = features_sub_aligned.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    features_tensor_train_val = torch.tensor(x_features_train_val, dtype=torch.float32)
+
+    x_features_test = features_full_df.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    features_tensor_test = torch.tensor(x_features_test, dtype=torch.float32)
+
+    y_tensor = torch.tensor(features_full_df["fraud"].values, dtype=torch.long)
+
     if sampling == "random_undersample" and ratio is not None:
-        train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor_train_val, ratio=ratio)
+        train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio)
     elif sampling == "smote" and ratio is not None:
-        features_tensor_train_val, y_tensor_train_val, train_mask_sampled = smote_mask(train_mask.bool(), features_tensor_train_val, y_tensor_train_val, ratio=ratio)
+        features_tensor_train_val, y_tensor_sampled, train_mask_sampled = smote_mask(train_mask.bool(), features_tensor_train_val, y_tensor, ratio=ratio)
     else:
         train_mask_sampled = train_mask.bool()
-        
-    # Extracted splits
+        y_tensor_sampled = y_tensor
+
     X_train = features_tensor_train_val[train_mask_sampled.cpu()].to(device_decoder)
-    y_train = y_tensor_train_val[train_mask_sampled.cpu()].to(device_decoder)
-    
-    # [Point 2: Add validation set to non-GNN methods]
-    X_val = features_tensor_train_val[val_mask.bool().cpu()].to(device_decoder)
-    y_val = y_tensor_train_val[val_mask.bool().cpu()].to(device_decoder)
-    
-    X_test = features_tensor_full[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
-    y_test = y_tensor_full[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
-    
+    y_train = y_tensor_sampled[train_mask_sampled.cpu()].to(device_decoder)
+    X_test = features_tensor_test[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
+    y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
+
+    if val_mask is not None:
+        X_val = features_tensor_train_val[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+        y_val = y_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+    else:
+        X_val, y_val = None, None
+
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
     weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
     criterion = nn.CrossEntropyLoss(weight=weight_tensor)
-    
-    early_stopping = EarlyStopping(
-        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor='val_ap'
-    )
-    
+
+    best_decoder_path = f"res/checkpoints/best_decoder_temp_{os.getpid()}_{np.random.randint(100000)}.pt"
+    os.makedirs("res/checkpoints", exist_ok=True)
+    if val_mask is not None:
+        early_stopping = EarlyStopping(patience=10, verbose=False, checkpoint_path=best_decoder_path, monitor='val_ap')
+    else:
+        early_stopping = None
+
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
@@ -276,134 +267,123 @@ def positional_features(
         loss = criterion(output, y_train)
         loss.backward()
         optimizer.step()
-        
-        # Validation evaluation
-        decoder.eval()
-        with torch.no_grad():
-            val_out = decoder(X_val)
-            val_out_softmax = val_out.softmax(dim=1)
-            val_ap = average_precision_score(y_val.cpu().numpy(), val_out_softmax.cpu().numpy()[:,1])
-            
-        early_stopping(val_ap, decoder)
-        if early_stopping.early_stop:
-            break
-            
-    if os.path.exists(checkpoint_path):
-        decoder.load_state_dict(torch.load(checkpoint_path, map_location=device_decoder))
-        
+
+        if val_mask is not None:
+            decoder.eval()
+            with torch.no_grad():
+                val_output = decoder(X_val)
+                val_pred = val_output.softmax(dim=1)
+                val_ap = average_precision_score(y_val.cpu().numpy(), val_pred.cpu().numpy()[:, 1])
+            early_stopping(val_ap, decoder)
+            if early_stopping.early_stop:
+                break
+
+    if val_mask is not None and os.path.exists(best_decoder_path):
+        decoder.load_state_dict(torch.load(best_decoder_path, map_location=device_decoder))
+        try:
+            os.remove(best_decoder_path)
+        except Exception:
+            pass
+
     decoder.eval()
-    y_pred = decoder(X_test)
-    y_pred = y_pred.softmax(dim=1)
+    with torch.no_grad():
+        y_pred = decoder(X_test)
+        y_pred = y_pred.softmax(dim=1)
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     cutoff = np.percentile(y_pred.cpu().detach().numpy()[:,1], percentile_q)
     y_pred_hard = (y_pred.cpu().detach().numpy()[:,1] >= cutoff).astype(int)
     f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
     return (ap_score, f1)
-
 
 def positional_features_with_predictions(
-    ntw, train_mask, val_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float, fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2, hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, ratio=None, sampling="none", patience=10, checkpoint_path="res/checkpoints/best_model_pos_tuned.pt"
+    ntw, train_mask, test_mask, alpha_pr: float, alpha_ppr: float, n_epochs_decoder: int, lr: float, fraud_dict_train: dict = None, fraud_dict_test: dict = None, n_layers_decoder: int = 2, hidden_dim_decoder: int = 5, ntw_name: str = None, use_intrinsic: bool = False, ratio=None, sampling="none", val_mask=None
 ):
     print("intrinsic and summary: ")
-    X_full_df = ntw.get_features(full=True)
-    
-    print("networkx (Full & Subgraph): ")
+    X = ntw.get_features(full=True)
+    print("networkx: ")
     ntw_nx_full = ntw.get_network_nx()
-    
-    # [Point 1: Subgraph isolation to completely block test set structure leakage]
-    train_val_mask = train_mask.bool() | val_mask.bool()
-    train_val_nodes = set(torch.where(train_val_mask)[0].tolist())
-    ntw_nx_train_val = ntw_nx_full.subgraph(list(train_val_nodes))
-    
-    # Calculate features on train-val subgraph
-    features_nx_df_train_val = local_features_nx(
-        ntw_nx_train_val, alpha_pr, alpha_ppr, 
-        fraud_dict_train=fraud_dict_train, 
-        ntw_name=ntw_name + "_train_val"
-    )
-    features_nk_df_train_val = features_nk(
-        ntw_nx_train_val, 
-        ntw_name=ntw_name + "_train_val_nk"
-    )
-    
-    if use_intrinsic:
-        X_train_val_df = X_full_df.loc[X_full_df.index.isin(features_nx_df_train_val.index)]
-        features_df_train_val = pd.concat([X_train_val_df, features_nx_df_train_val, features_nk_df_train_val], axis=1)
+
+    # Isolated computation for train+val subgraph to ensure zero data leakage
+    if val_mask is not None:
+        train_val_mask = train_mask.bool() | val_mask.bool()
     else:
-        features_df_train_val = pd.concat([features_nx_df_train_val, features_nk_df_train_val], axis=1)
-        
-    features_df_train_val["fraud"] = [fraud_dict_test[x] for x in features_df_train_val.index]
-    
-    # Map back to full-sized zeros to allow downstream masking code to work unmodified
-    N_nodes = int(ntw_nx_full.number_of_nodes())
-    x_features_train_val = features_df_train_val.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    D_features = x_features_train_val.shape[1]
-    
-    full_size_x_train_val = np.zeros((N_nodes, D_features), dtype=np.float32)
-    for idx, row in features_df_train_val.iterrows():
-        full_size_x_train_val[int(idx)] = row.drop(["PSP", "fraud"], errors='ignore').values
-        
-    features_tensor_train_val = torch.tensor(full_size_x_train_val, dtype=torch.float32)
-    y_tensor_train_val = torch.tensor([fraud_dict_test.get(i, 0) for i in range(N_nodes)], dtype=torch.long)
-    
-    # Calculate features on full graph for validation/test evaluation
-    features_nx_df_full = local_features_nx(
-        ntw_nx_full, alpha_pr, alpha_ppr, 
-        fraud_dict_train=fraud_dict_train, 
-        ntw_name=ntw_name + "_full"
-    )
-    ntw_nk_full = ntw.get_network_nk()
-    features_nk_df_full = features_nk(
-        ntw_nk_full, 
-        ntw_name=ntw_name + "_full_nk"
-    )
-    
+        train_val_mask = train_mask.bool()
+    train_val_nodes = torch.where(train_val_mask)[0].cpu().numpy().tolist()
+    train_val_nodes_set = set(train_val_nodes)
+
+    ntw_nx_sub = ntw_nx_full.subgraph(train_val_nodes)
+    fraud_dict_train_sub = {k: v for k, v in fraud_dict_train.items() if k in train_val_nodes_set} if fraud_dict_train else None
+
+    features_nx_sub = local_features_nx(ntw_nx_sub, alpha_pr, alpha_ppr, fraud_dict_train=fraud_dict_train_sub, ntw_name=f"{ntw_name}_train_val")
+    features_nk_sub = features_nk(ntw_nx_sub, ntw_name=f"{ntw_name}_train_val")
+
     if use_intrinsic:
-        features_df_full = pd.concat([X_full_df, features_nx_df_full, features_nk_df_full], axis=1)
+        features_sub_df = pd.concat([X.loc[train_val_nodes], features_nx_sub, features_nk_sub], axis=1)
     else:
-        features_df_full = pd.concat([features_nx_df_full, features_nk_df_full], axis=1)
-        
-    features_df_full["fraud"] = [fraud_dict_test[x] for x in features_df_full.index]
-    
-    x_features_full = features_df_full.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    features_tensor_full = torch.tensor(x_features_full, dtype=torch.float32)
-    y_tensor_full = torch.tensor(features_df_full["fraud"].values, dtype=torch.long)
-    
+        features_sub_df = pd.concat([features_nx_sub, features_nk_sub], axis=1)
+
+    # Full graph computation for test nodes evaluation
+    features_nx_full = local_features_nx(ntw_nx_full, alpha_pr, alpha_ppr, fraud_dict_train=fraud_dict_train, ntw_name=f"{ntw_name}_full")
+    features_nk_full = features_nk(ntw_nx_full, ntw_name=f"{ntw_name}_full")
+
+    if use_intrinsic:
+        features_full_df = pd.concat([X, features_nx_full, features_nk_full], axis=1)
+    else:
+        features_full_df = pd.concat([features_nx_full, features_nk_full], axis=1)
+
+    features_full_df["fraud"] = [fraud_dict_test[x] for x in features_full_df.index]
+    features_sub_df["fraud"] = [fraud_dict_test[x] for x in features_sub_df.index]
+
+    # Align sub-computed features back to full dimensions with zero-fill for test
+    features_sub_aligned = pd.DataFrame(0.0, index=features_full_df.index, columns=features_full_df.columns)
+    features_sub_aligned.loc[train_val_nodes] = features_sub_df.loc[train_val_nodes]
+
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    
+
+    x_features_train_val = features_sub_aligned.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    features_tensor_train_val = torch.tensor(x_features_train_val, dtype=torch.float32)
+
+    x_features_test = features_full_df.drop(["PSP", "fraud"], axis=1, errors='ignore').values
+    features_tensor_test = torch.tensor(x_features_test, dtype=torch.float32)
+
+    y_tensor = torch.tensor(features_full_df["fraud"].values, dtype=torch.long)
+
     if sampling == "random_undersample" and ratio is not None:
-        train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor_train_val, ratio=ratio)
+        train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio)
     elif sampling == "smote" and ratio is not None:
-        features_tensor_train_val, y_tensor_train_val, train_mask_sampled = smote_mask(train_mask.bool(), features_tensor_train_val, y_tensor_train_val, ratio=ratio)
+        features_tensor_train_val, y_tensor_sampled, train_mask_sampled = smote_mask(train_mask.bool(), features_tensor_train_val, y_tensor, ratio=ratio)
     else:
         train_mask_sampled = train_mask.bool()
-        
-    # Extracted splits
+        y_tensor_sampled = y_tensor
+
     X_train = features_tensor_train_val[train_mask_sampled.cpu()].to(device_decoder)
-    y_train = y_tensor_train_val[train_mask_sampled.cpu()].to(device_decoder)
-    
-    # [Point 2: Add validation set to non-GNN methods]
-    X_val = features_tensor_train_val[val_mask.bool().cpu()].to(device_decoder)
-    y_val = y_tensor_train_val[val_mask.bool().cpu()].to(device_decoder)
-    
-    X_test = features_tensor_full[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
-    y_test = y_tensor_full[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
-    
+    y_train = y_tensor_sampled[train_mask_sampled.cpu()].to(device_decoder)
+    X_test = features_tensor_test[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
+    y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
+
+    if val_mask is not None:
+        X_val = features_tensor_train_val[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+        y_val = y_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+    else:
+        X_val, y_val = None, None
+
     decoder = Decoder_deep_norm(X_train.shape[1], n_layers_decoder, hidden_dim_decoder).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
-    
     num_pos = int((y_train == 1).sum().item())
     num_neg = int((y_train == 0).sum().item())
     pos_weight = float(num_neg) / max(num_pos, 1)
     weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
     criterion = nn.CrossEntropyLoss(weight=weight_tensor)
-    
-    early_stopping = EarlyStopping(
-        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor='val_ap'
-    )
-    
+
+    best_decoder_path = f"res/checkpoints/best_decoder_temp_{os.getpid()}_{np.random.randint(100000)}.pt"
+    os.makedirs("res/checkpoints", exist_ok=True)
+    if val_mask is not None:
+        early_stopping = EarlyStopping(patience=10, verbose=False, checkpoint_path=best_decoder_path, monitor='val_ap')
+    else:
+        early_stopping = None
+
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
@@ -411,34 +391,33 @@ def positional_features_with_predictions(
         loss = criterion(output, y_train)
         loss.backward()
         optimizer.step()
-        
-        # Validation evaluation
-        decoder.eval()
-        with torch.no_grad():
-            val_out = decoder(X_val)
-            val_out_softmax = val_out.softmax(dim=1)
-            val_ap = average_precision_score(y_val.cpu().numpy(), val_out_softmax.cpu().numpy()[:,1])
-            
-        early_stopping(val_ap, decoder)
-        if early_stopping.early_stop:
-            break
-            
-    if os.path.exists(checkpoint_path):
-        decoder.load_state_dict(torch.load(checkpoint_path, map_location=device_decoder))
-        
+
+        if val_mask is not None:
+            decoder.eval()
+            with torch.no_grad():
+                val_output = decoder(X_val)
+                val_pred = val_output.softmax(dim=1)
+                val_ap = average_precision_score(y_val.cpu().numpy(), val_pred.cpu().numpy()[:, 1])
+            early_stopping(val_ap, decoder)
+            if early_stopping.early_stop:
+                break
+
+    if val_mask is not None and os.path.exists(best_decoder_path):
+        decoder.load_state_dict(torch.load(best_decoder_path, map_location=device_decoder))
+        try:
+            os.remove(best_decoder_path)
+        except Exception:
+            pass
+
     decoder.eval()
-    y_pred = decoder(X_test)
-    y_pred = y_pred.softmax(dim=1)
+    with torch.no_grad():
+        y_pred = decoder(X_test)
+        y_pred = y_pred.softmax(dim=1)
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
 
-
-# =====================================================================
-# 3. Node2Vec (No Graph Modifications Needed - Symmetrically Padded and Corrected)
-# =====================================================================
-
 def node2vec_features(
-    ntw_torch, train_mask, val_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, percentile_q=99, ratio=None, sampling="none"
+    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, percentile_q=99, ratio=None, sampling="none"
 ):
     if use_torch:
         active_nodes = (train_mask.bool() | test_mask.bool())
@@ -463,7 +442,7 @@ def node2vec_features(
             graph_for_n2v = ntw_torch
     else:
         graph_for_n2v = ntw_torch
-        
+
     model_n2v = node2vec_representation_torch(
         graph_for_n2v, train_mask=train_mask, test_mask=test_mask, embedding_dim=embedding_dim, walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node, num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
     )
@@ -475,11 +454,13 @@ def node2vec_features(
         x_full = torch.zeros((ntw_torch.num_nodes, x.shape[1]), dtype=x.dtype)
         x_full[active_idx] = x
         x = x_full
+
     x_intrinsic = ntw_torch.x.detach().to('cpu')
     x_intrinsic = torch.nan_to_num(x_intrinsic, nan=0.0, posinf=1e5, neginf=-1e5)
     if use_intrinsic:
         x = torch.cat((x, x_intrinsic), 1)
     y_tensor = ntw_torch.y.cpu()
+
     if sampling == "random_undersample" and ratio is not None:
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio)
     elif sampling == "smote" and ratio is not None:
@@ -488,14 +469,15 @@ def node2vec_features(
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio)
     else:
         train_mask_sampled = train_mask.bool()
-        
+
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    x_train = x[train_mask_sampled.cpu()].to(device_decoder).squeeze()
-    x_test = x[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
-    y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder).squeeze()
-    y_test = ntw_torch.y[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
+    x_train = x[train_mask_sampled].to(device_decoder).squeeze()
+    x_test = x[:test_mask.shape[0]][test_mask.bool()].to(device_decoder).squeeze()
+    y_train = y_tensor[train_mask_sampled].to(device_decoder).squeeze()
+    y_test = ntw_torch.y[:test_mask.shape[0]][test_mask.bool()].to(device_decoder).squeeze()
+
     decoder = Decoder_deep_norm(x_train.shape[1], 2, 10).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
     num_pos = int((y_train == 1).sum().item())
@@ -503,6 +485,7 @@ def node2vec_features(
     pos_weight = float(num_neg) / max(num_pos, 1)
     weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
     criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
@@ -510,6 +493,7 @@ def node2vec_features(
         loss = criterion(output, y_train)
         loss.backward()
         optimizer.step()
+
     decoder.eval()
     y_pred = decoder(x_test)
     y_pred = y_pred.softmax(dim=1)
@@ -519,9 +503,8 @@ def node2vec_features(
     f1 = f1_score(y_test.cpu().detach().numpy(), y_pred_hard)
     return (ap_score, f1)
 
-
 def node2vec_features_with_predictions(
-    ntw_torch, train_mask, val_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, ratio=None, sampling="none"
+    ntw_torch, train_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, ratio=None, sampling="none"
 ):
     if use_torch:
         active_nodes = (train_mask.bool() | test_mask.bool())
@@ -546,7 +529,7 @@ def node2vec_features_with_predictions(
             graph_for_n2v = ntw_torch
     else:
         graph_for_n2v = ntw_torch
-        
+
     model_n2v = node2vec_representation_torch(
         graph_for_n2v, train_mask=train_mask, test_mask=test_mask, embedding_dim=embedding_dim, walk_length=walk_length, context_size=context_size, walks_per_node=walks_per_node, num_negative_samples=num_negative_samples, p=p, q=q, lr=lr, n_epochs=n_epochs
     )
@@ -558,11 +541,13 @@ def node2vec_features_with_predictions(
         x_full = torch.zeros((ntw_torch.num_nodes, x.shape[1]), dtype=x.dtype)
         x_full[active_idx] = x
         x = x_full
+
     x_intrinsic = ntw_torch.x.detach().to('cpu')
     x_intrinsic = torch.nan_to_num(x_intrinsic, nan=0.0, posinf=1e5, neginf=-1e5)
     if use_intrinsic:
         x = torch.cat((x, x_intrinsic), 1)
     y_tensor = ntw_torch.y.cpu()
+
     if sampling == "random_undersample" and ratio is not None:
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio)
     elif sampling == "smote" and ratio is not None:
@@ -571,14 +556,15 @@ def node2vec_features_with_predictions(
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio)
     else:
         train_mask_sampled = train_mask.bool()
-        
+
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    x_train = x[train_mask_sampled.cpu()].to(device_decoder).squeeze()
-    x_test = x[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
-    y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder).squeeze()
-    y_test = ntw_torch.y[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
+    x_train = x[train_mask_sampled].to(device_decoder).squeeze()
+    x_test = x[:test_mask.shape[0]][test_mask.bool()].to(device_decoder).squeeze()
+    y_train = y_tensor[train_mask_sampled].to(device_decoder).squeeze()
+    y_test = ntw_torch.y[:test_mask.shape[0]][test_mask.bool()].to(device_decoder).squeeze()
+
     decoder = Decoder_deep_norm(x_train.shape[1], 2, 10).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
     num_pos = int((y_train == 1).sum().item())
@@ -586,6 +572,7 @@ def node2vec_features_with_predictions(
     pos_weight = float(num_neg) / max(num_pos, 1)
     weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device_decoder)
     criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+
     for epoch in range(n_epochs_decoder):
         decoder.train()
         optimizer.zero_grad()
@@ -593,16 +580,12 @@ def node2vec_features_with_predictions(
         loss = criterion(output, y_train)
         loss.backward()
         optimizer.step()
+
     decoder.eval()
     y_pred = decoder(x_test)
     y_pred = y_pred.softmax(dim=1)
     ap_score = average_precision_score(y_test.cpu().detach().numpy(), y_pred.cpu().detach().numpy()[:,1])
     return ap_score, y_pred.cpu().detach().numpy()[:,1], y_test.cpu().detach().numpy()
-
-
-# =====================================================================
-# 4. Standard GNN Methods (Validation, Slicing Protected)
-# =====================================================================
 
 def GNN_features(
     ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none"
@@ -624,25 +607,25 @@ def GNN_features(
         train_mask_sampled = train_mask_np.to(device)
     else:
         train_mask_sampled = train_mask.bool().to(device)
-        
+
     def _mask_to_device(mask):
         if mask is None:
             return None
         return mask.bool().to(device)
-        
+
     def _forward(x, edge_index):
         if use_intrinsic:
             return model(x, edge_index)
         ones = torch.ones((x.shape[0], 1), dtype=torch.float32, device=device)
         return model(ones, edge_index)
-        
+
     def _build_weighted_criterion(y_subset):
         num_pos = int((y_subset == 1).sum().item())
         num_neg = int((y_subset == 0).sum().item())
         pos_weight = float(num_neg) / max(num_pos, 1)
         weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device)
         return nn.CrossEntropyLoss(weight=weight_tensor)
-        
+
     def train_epoch():
         model.train()
         optimizer.zero_grad()
@@ -656,7 +639,7 @@ def GNN_features(
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         return loss.item()
-        
+
     def evaluate_split(mask):
         model.eval()
         with torch.no_grad():
@@ -676,7 +659,7 @@ def GNN_features(
             y_pred_hard = (y_hat.cpu().numpy()[:, 1] >= cutoff).astype(int)
             f1 = f1_score(y_filtered.cpu().numpy(), y_pred_hard)
             return {'loss': loss, 'ap': ap_score, 'f1': f1}
-            
+
     for epoch in range(n_epochs):
         train_loss = train_epoch()
         if val_mask is not None:
@@ -686,14 +669,13 @@ def GNN_features(
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
                 early_stopping(metric_to_monitor, model)
                 if early_stopping.early_stop:
-                    print(f"[GNN_features] Early Stop triggered!")
+                    print(f"[GNN_features] 連續 {patience} 個 Epoch 未改善，終止訓練！")
                     break
-                    
+
     if val_mask is not None and os.path.exists(checkpoint_path):
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     test_result = evaluate_split(test_mask)
     return test_result['ap'], test_result['f1']
-
 
 def GNN_features_with_predictions(
     ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none"
@@ -715,25 +697,25 @@ def GNN_features_with_predictions(
         train_mask_sampled = train_mask_np.to(device)
     else:
         train_mask_sampled = train_mask.bool().to(device)
-        
+
     def _mask_to_device(mask):
         if mask is None:
             return None
         return mask.bool().to(device)
-        
+
     def _forward(x, edge_index):
         if use_intrinsic:
             return model(x, edge_index)
         ones = torch.ones((x.shape[0], 1), dtype=torch.float32, device=device)
         return model(ones, edge_index)
-        
+
     def _build_weighted_criterion(y_subset):
         num_pos = int((y_subset == 1).sum().item())
         num_neg = int((y_subset == 0).sum().item())
         pos_weight = float(num_neg) / max(num_pos, 1)
         weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device)
         return nn.CrossEntropyLoss(weight=weight_tensor)
-        
+
     def train_epoch():
         model.train()
         optimizer.zero_grad()
@@ -747,7 +729,7 @@ def GNN_features_with_predictions(
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         return loss.item()
-        
+
     def evaluate_split(mask):
         model.eval()
         with torch.no_grad():
@@ -764,7 +746,7 @@ def GNN_features_with_predictions(
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
             return {'loss': loss, 'ap': ap_score, 'output': y_hat, 'y': y_filtered}
-            
+
     for epoch in range(n_epochs):
         train_loss = train_epoch()
         if val_mask is not None:
@@ -774,18 +756,13 @@ def GNN_features_with_predictions(
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
                 early_stopping(metric_to_monitor, model)
                 if early_stopping.early_stop:
-                    print(f"[GNN_features] Early Stop triggered!")
+                    print(f"[GNN_features] 連續 {patience} 個 Epoch 未改善，終止訓練！")
                     break
-                    
+
     if val_mask is not None and os.path.exists(checkpoint_path):
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     test_result = evaluate_split(test_mask)
     return test_result['ap'], test_result['output'].cpu().numpy()[:, 1], test_result['y'].cpu().numpy()
-
-
-# =====================================================================
-# 5. GNN GraphSMOTE (Point 3 - Train-Evaluation Graph Match)
-# =====================================================================
 
 def GNN_features_graphsmote(
     ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None
@@ -795,25 +772,25 @@ def GNN_features_graphsmote(
     early_stopping = EarlyStopping(
         patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
     )
-    
+
     def _build_weighted_criterion(y_subset):
         num_pos = int((y_subset == 1).sum().item())
         num_neg = int((y_subset == 0).sum().item())
         pos_weight = float(num_neg) / max(num_pos, 1)
         weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device)
         return nn.CrossEntropyLoss(weight=weight_tensor)
-        
+
     def _mask_to_device(mask):
         if mask is None:
             return None
         return mask.bool().to(device)
-        
+
     def _forward(x, edge_index, edge_attr=None):
         if use_intrinsic:
             return model(x, edge_index, edge_attr=edge_attr)
         ones = torch.ones((x.shape[0], 1), dtype=torch.float32, device=device)
         return model(ones, edge_index, edge_attr=edge_attr)
-        
+
     if sampling == "reweighted_graph_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
@@ -828,26 +805,17 @@ def GNN_features_graphsmote(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
         edge_attr_smote = None
-        
+
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
     ntw_torch_smote.y = y_smote.long().to(device)
     ntw_torch_smote.edge_index = edge_index_smote.long().to(device)
     if edge_attr_smote is not None:
         ntw_torch_smote.edge_attr = edge_attr_smote.to(device=device, dtype=torch.float32)
-        
     train_mask_smote = train_mask_smote.bool().to(device)
-    
-    # [Point 3: Create padded masks for expanded graph size validation/test symmetry]
-    n_synthetic = int(x_smote.shape[0] - ntw_torch.x.shape[0])
-    if val_mask is not None:
-        val_mask_smote = torch.cat([val_mask.bool().cpu(), torch.zeros(n_synthetic, dtype=torch.bool)]).to(device)
-    else:
-        val_mask_smote = None
-    test_mask_smote = torch.cat([test_mask.bool().cpu(), torch.zeros(n_synthetic, dtype=torch.bool)]).to(device)
-    
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
-    
+
     def train_epoch():
         model.train()
         optimizer.zero_grad()
@@ -865,16 +833,22 @@ def GNN_features_graphsmote(
             optimizer.step()
             return loss.item()
         return 0.0
-        
-    def evaluate_split(mask_smote):
+
+    # Fixed Train-Eval Mismatch: Run forward pass on augmented graphsmote representation consistently
+    def evaluate_split(mask):
         model.eval()
         with torch.no_grad():
-            edge_attr_for_eval = ntw_torch_smote.edge_attr if hasattr(ntw_torch_smote, 'edge_attr') and ntw_torch_smote.edge_attr is not None else None
-            out, _ = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, edge_attr=edge_attr_for_eval)
-            y = ntw_torch_smote.y
-            mask_dev = mask_smote.bool().to(device)
-            out_filtered = out[mask_dev]
-            y_filtered = y[mask_dev]
+            edge_attr_for_epoch = ntw_torch_smote.edge_attr if hasattr(ntw_torch_smote, 'edge_attr') and ntw_torch_smote.edge_attr is not None else None
+            out, _ = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, edge_attr=edge_attr_for_epoch)
+            
+            n_original = ntw_torch.x.shape[0]
+            out_orig = out[:n_original]
+            y_orig = ntw_torch.y.long().to(device)
+            
+            mask_dev = _mask_to_device(mask)
+            out_filtered = out_orig[mask_dev]
+            y_filtered = y_orig[mask_dev]
+            
             if out_filtered.shape[0] == 0:
                 return None
             criterion = _build_weighted_criterion(y_filtered)
@@ -886,24 +860,23 @@ def GNN_features_graphsmote(
             y_pred_hard = (y_hat.cpu().numpy()[:, 1] >= cutoff).astype(int)
             f1 = f1_score(y_filtered.cpu().numpy(), y_pred_hard)
             return {'loss': loss, 'ap': ap_score, 'f1': f1}
-            
+
     for epoch in range(n_epochs):
         train_loss = train_epoch()
-        if val_mask_smote is not None:
-            val_result = evaluate_split(val_mask_smote)
+        if val_mask is not None:
+            val_result = evaluate_split(val_mask)
             if val_result is not None:
                 print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_loss={val_result['loss']:.6f} | val_ap={val_result['ap']:.6f}")
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
                 early_stopping(metric_to_monitor, model)
                 if early_stopping.early_stop:
-                    print(f"[{sampling}] Early Stop triggered!")
+                    print(f"[{sampling}] 連續 {patience} 個 Epoch 未改善，終止訓練！")
                     break
-                    
-    if val_mask_smote is not None and os.path.exists(checkpoint_path):
-        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-    test_result = evaluate_split(test_mask_smote)
-    return test_result['ap'], test_result['f1']
 
+    if val_mask is not None and os.path.exists(checkpoint_path):
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    test_result = evaluate_split(test_mask)
+    return test_result['ap'], test_result['f1']
 
 def GNN_features_graphsmote_with_predictions(
     ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None
@@ -913,25 +886,25 @@ def GNN_features_graphsmote_with_predictions(
     early_stopping = EarlyStopping(
         patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
     )
-    
+
     def _build_weighted_criterion(y_subset):
         num_pos = int((y_subset == 1).sum().item())
         num_neg = int((y_subset == 0).sum().item())
         pos_weight = float(num_neg) / max(num_pos, 1)
         weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device)
         return nn.CrossEntropyLoss(weight=weight_tensor)
-        
+
     def _mask_to_device(mask):
         if mask is None:
             return None
         return mask.bool().to(device)
-        
+
     def _forward(x, edge_index, edge_attr=None):
         if use_intrinsic:
             return model(x, edge_index, edge_attr=edge_attr)
         ones = torch.ones((x.shape[0], 1), dtype=torch.float32, device=device)
         return model(ones, edge_index, edge_attr=edge_attr)
-        
+
     if sampling == "reweighted_graph_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
@@ -946,26 +919,17 @@ def GNN_features_graphsmote_with_predictions(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
         edge_attr_smote = None
-        
+
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
     ntw_torch_smote.y = y_smote.long().to(device)
     ntw_torch_smote.edge_index = edge_index_smote.long().to(device)
     if edge_attr_smote is not None:
         ntw_torch_smote.edge_attr = edge_attr_smote.to(device=device, dtype=torch.float32)
-        
     train_mask_smote = train_mask_smote.bool().to(device)
-    
-    # [Point 3: Create padded masks for expanded graph size validation/test symmetry]
-    n_synthetic = int(x_smote.shape[0] - ntw_torch.x.shape[0])
-    if val_mask is not None:
-        val_mask_smote = torch.cat([val_mask.bool().cpu(), torch.zeros(n_synthetic, dtype=torch.bool)]).to(device)
-    else:
-        val_mask_smote = None
-    test_mask_smote = torch.cat([test_mask.bool().cpu(), torch.zeros(n_synthetic, dtype=torch.bool)]).to(device)
-    
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
-    
+
     def train_epoch():
         model.train()
         optimizer.zero_grad()
@@ -983,16 +947,22 @@ def GNN_features_graphsmote_with_predictions(
             optimizer.step()
             return loss.item()
         return 0.0
-        
-    def evaluate_split(mask_smote):
+
+    # Fixed Train-Eval Mismatch: Run forward pass on augmented graphsmote representation consistently
+    def evaluate_split(mask):
         model.eval()
         with torch.no_grad():
-            edge_attr_for_eval = ntw_torch_smote.edge_attr if hasattr(ntw_torch_smote, 'edge_attr') and ntw_torch_smote.edge_attr is not None else None
-            out, _ = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, edge_attr=edge_attr_for_eval)
-            y = ntw_torch_smote.y
-            mask_dev = mask_smote.bool().to(device)
-            out_filtered = out[mask_dev]
-            y_filtered = y[mask_dev]
+            edge_attr_for_epoch = ntw_torch_smote.edge_attr if hasattr(ntw_torch_smote, 'edge_attr') and ntw_torch_smote.edge_attr is not None else None
+            out, _ = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, edge_attr=edge_attr_for_epoch)
+            
+            n_original = ntw_torch.x.shape[0]
+            out_orig = out[:n_original]
+            y_orig = ntw_torch.y.long().to(device)
+            
+            mask_dev = _mask_to_device(mask)
+            out_filtered = out_orig[mask_dev]
+            y_filtered = y_orig[mask_dev]
+            
             if out_filtered.shape[0] == 0:
                 return None
             criterion = _build_weighted_criterion(y_filtered)
@@ -1001,20 +971,20 @@ def GNN_features_graphsmote_with_predictions(
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
             return {'loss': loss, 'ap': ap_score, 'output': y_hat, 'y': y_filtered}
-            
+
     for epoch in range(n_epochs):
         train_loss = train_epoch()
-        if val_mask_smote is not None:
-            val_result = evaluate_split(val_mask_smote)
+        if val_mask is not None:
+            val_result = evaluate_split(val_mask)
             if val_result is not None:
                 print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_loss={val_result['loss']:.6f} | val_ap={val_result['ap']:.6f}")
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
                 early_stopping(metric_to_monitor, model)
                 if early_stopping.early_stop:
-                    print(f"[{sampling}] Early Stop triggered!")
+                    print(f"[{sampling}] 連續 {patience} 個 Epoch 未改善，終止訓練！")
                     break
-                    
-    if val_mask_smote is not None and os.path.exists(checkpoint_path):
+
+    if val_mask is not None and os.path.exists(checkpoint_path):
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-    test_result = evaluate_split(test_mask_smote)
+    test_result = evaluate_split(test_mask)
     return test_result['ap'], test_result['output'].cpu().numpy()[:, 1], test_result['y'].cpu().numpy()

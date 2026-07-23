@@ -126,18 +126,48 @@ def local_features_nx(
     else:
         use_fraud_features = True
     
+    # [SUBGRAPH SUPPORT] Get current graph nodes
+    graph_nodes = set(G_nx.nodes())
+    
+    # [SUBGRAPH SUPPORT] Filter fraud_dict_train to only include nodes in G_nx
+    if use_fraud_features and fraud_dict_train is not None:
+        dict_nodes = set(fraud_dict_train.keys())
+        extra_nodes = dict_nodes - graph_nodes
+        if extra_nodes:
+            print(f"[local_features_nx] WARNING: fraud_dict_train contains {len(extra_nodes)} nodes not in G_nx, filtering...")
+            fraud_dict_train = {k: v for k, v in fraud_dict_train.items() if k in graph_nodes}
+    
     location = 'res/'+ntw_name+'_features_nx.csv'
     try:
         features_df = pd.read_csv(location, index_col=0)
+        # [SUBGRAPH SUPPORT] Validate cached features match current graph
+        cached_nodes = set(features_df.index)
+        if cached_nodes != graph_nodes:
+            print(f"[local_features_nx] WARNING: Cache node mismatch. Cached: {len(cached_nodes)}, Graph: {len(graph_nodes)}")
+            print(f"  Extra in cache: {len(cached_nodes - graph_nodes)}, Missing from cache: {len(graph_nodes - cached_nodes)}")
+            # Recalculate to match current graph
+            raise FileNotFoundError("Cache node mismatch - recalculating")
     except:
         features_df = local_features_nx_calculation(G_nx, fraud_dict_train=fraud_dict_train, use_fraud_features=use_fraud_features)
         features_df.to_csv(location)
 
     pr_nx = nx.pagerank(G_nx, alpha=alpha_pr)
+    
+    # [SUBGRAPH SUPPORT] Verify all required nodes are in PageRank results
+    missing_nodes = set(features_df.index) - set(pr_nx.keys())
+    if missing_nodes:
+        print(f"[local_features_nx] ERROR: PageRank missing {len(missing_nodes)} nodes: {list(missing_nodes)[:5]}...")
+        raise ValueError(f"PageRank computation missing {len(missing_nodes)} nodes")
+    
     features_df['PageRank'] = [pr_nx[x] for x in features_df.index]
 
     if use_fraud_features:
         ppr_nx = nx.pagerank(G_nx, alpha=alpha_ppr, personalization=fraud_dict_train)
+        # [SUBGRAPH SUPPORT] Verify all required nodes are in PPR results
+        missing_nodes = set(features_df.index) - set(ppr_nx.keys())
+        if missing_nodes:
+            print(f"[local_features_nx] ERROR: Personalized PageRank missing {len(missing_nodes)} nodes")
+            raise ValueError(f"PPR computation missing {len(missing_nodes)} nodes")
         features_df['PersonalisedPageRank'] = [ppr_nx[x] for x in features_df.index]
 
     return(features_df)
