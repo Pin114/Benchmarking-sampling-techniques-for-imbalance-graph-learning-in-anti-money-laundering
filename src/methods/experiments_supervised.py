@@ -37,7 +37,7 @@ def intrinsic_features(
     else:
         train_mask_sampled = train_mask.bool().to(device_decoder)
 
-    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵矩陣與原始 test_mask 長度不符拋出 IndexError 
+    # To avoid IndexError due to SMOTE interpolation expanding the feature matrix beyond the original test_mask length
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
     X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
@@ -85,7 +85,7 @@ def intrinsic_features_with_predictions(
     else:
         train_mask_sampled = train_mask.bool().to(device_decoder)
 
-    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵矩陣與原始 test_mask 長度不符拋出 IndexError
+    # To avoid IndexError due to SMOTE interpolation expanding the feature matrix beyond the original test_mask length
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
     X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
@@ -147,7 +147,7 @@ def positional_features(
     else:
         train_mask_sampled = train_mask.bool()
 
-    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵矩陣與原始 test_mask 長度不符拋出 IndexError
+    # To avoid IndexError due to SMOTE interpolation expanding the feature matrix beyond the original test_mask length
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
     X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
@@ -212,7 +212,6 @@ def positional_features_with_predictions(
     else:
         train_mask_sampled = train_mask.bool()
 
-    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵矩陣與原始 test_mask 長度不符拋出 IndexError
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
     X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
@@ -303,7 +302,6 @@ def node2vec_features(
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
 
-    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵與測試集遮罩長度不符
     x_train = x[train_mask_sampled.cpu()].to(device_decoder).squeeze()
     x_test = x[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder).squeeze()
@@ -396,7 +394,6 @@ def node2vec_features_with_predictions(
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
 
-    # 【安全防禦切片】：避免 SMOTE 插值擴增後特徵與測試集遮罩長度不符
     x_train = x[train_mask_sampled.cpu()].to(device_decoder).squeeze()
     x_test = x[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder).squeeze()
@@ -486,7 +483,7 @@ def GNN_features(
             out, _ = _forward(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
             y = ntw_torch.y.long().to(device)
             mask_dev = _mask_to_device(mask)
-            # 【安全防禦切片】：避免 Feature SMOTE 時，GNN預測與原始驗證/測試集遮罩長度不符
+
             out_filtered = out[:mask_dev.shape[0]][mask_dev]
             y_filtered = y[:mask_dev.shape[0]][mask_dev]
             if out_filtered.shape[0] == 0:
@@ -578,7 +575,6 @@ def GNN_features_with_predictions(
             out, _ = _forward(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
             y = ntw_torch.y.long().to(device)
             mask_dev = _mask_to_device(mask)
-            # 【安全防禦切片】：避免 Feature SMOTE 時，GNN預測與原始驗證/測試集遮罩長度不符
             out_filtered = out[:mask_dev.shape[0]][mask_dev]
             y_filtered = y[:mask_dev.shape[0]][mask_dev]
             if out_filtered.shape[0] == 0:

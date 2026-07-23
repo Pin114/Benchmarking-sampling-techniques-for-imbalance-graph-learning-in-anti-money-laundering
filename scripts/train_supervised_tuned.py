@@ -12,7 +12,7 @@ import argparse
 # ---------------- Environment Setup ----------------
 os.environ["OMP_NUM_THREADS"] = "1"
 DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
-ROOT_DIR = os.path.abspath(os.path.join(DIR, ".."))  # 自動解析絕對路徑，防止 ModuleNotFoundError
+ROOT_DIR = os.path.abspath(os.path.join(DIR, ".."))  
 os.chdir(ROOT_DIR)
 
 if ROOT_DIR not in sys.path:
@@ -60,13 +60,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     set_seed(args.seed)
 
-    # 確保輸出目錄存在 (例如 res/tuned/)
     out_path = Path(args.out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
     ntw_name = args.network
-    # 我們重構後的一體化採樣比例
-    test_ratios = [None, 100.0, 10.0, 2.0, 1.0]  # 新增 100:1 比例
+
+    test_ratios = [None, 100.0, 10.0, 2.0, 1.0]  
     ratio_names = {None: "original", 100.0: "ratio_1to100", 10.0: "ratio_1to10", 2.0: "ratio_1to2", 1.0: "ratio_1to1"}
 
     # Mock loading for compiling check
@@ -147,7 +146,6 @@ if __name__ == "__main__":
                         pass
 
                 try:
-                    # 統一呼叫全新的 _with_predictions 介面，並傳入調優參數與目標比例 (ratio)
                     if method == "intrinsic":
                         ap_score, y_pred_probs, y_true = intrinsic_features_with_predictions(
                             ntw, train_mask_ratio, test_mask, n_layers_decoder=2, hidden_dim_decoder=16,
