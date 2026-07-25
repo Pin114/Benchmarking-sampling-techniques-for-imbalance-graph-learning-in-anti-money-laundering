@@ -121,3 +121,28 @@ pip install torch torch-geometric pandas numpy scikit-learn imbalanced-learn net
 ---
 
 *This benchmark suite guarantees rigorous, leak-free AML modeling designed to evaluate how structural and feature-space resampling impacts model generalizability across diverse scale conditions.*
+
+## 🆕 Additions: Focal Loss, GATSMOTE, and TNU
+
+This update adds support for:
+
+- **Focal Loss** (`focal`) — a drop-in loss module to focus training on hard minority examples. CLI flag: `--loss focal`, with hyperparameters `--focal-gamma` and `--focal-alpha` (supports `balanced` or numeric).
+- **GATSMOTE** (`gatsmote`) — graph-aware oversampling that uses neighborhood attention to place edges for synthetic minority nodes. Key CLI params: `--gatsmote-k-neighbors`, `--gatsmote-attention-heads`, `--gatsmote-edge-threshold`, `--gatsmote-homophily-weight`, `--gatsmote-use-predicted-labels`.
+- **Targeted Neighbourhood Undersampling (TNU)** (`tnu` / `targeted_neighbourhood_undersampling`) — graph-aware undersampling that removes noisy/dissimilar majority neighbors around minority nodes. CLI params: `--tnu-k-neighbors`, `--tnu-distance-metric`, `--tnu-remove-ratio`, `--tnu-noise-threshold`.
+
+These methods are implemented with strict train-mask-only operations to avoid label leakage. The sampler canonical names are:
+
+```
+none, rus, smote, graph_smote, gatsmote, targeted_neighbourhood_undersampling, graph_ensemble_smote, reweighted_graph_smote
+```
+
+The tuning script `scripts/train_supervised_tuned.py` includes an expanded imbalance ratio grid and accepts `--loss` and sampler-specific hyperparameters. Example commands are described below.
+
+### Quick example: Focal + GATSMOTE on IBM (extreme imbalance)
+
+```bash
+python scripts/train_supervised_tuned.py --network hi_small --loss focal --focal-gamma 2.0 --focal-alpha balanced --gatsmote-k-neighbors 5 --gatsmote-attention-heads 1 --gatsmote-edge-threshold 0.5 --gatsmote-homophily-weight 1.0
+```
+
+### Note on imbalance ratios
+The tuning grid now supports: `1:1, 1:2, 1:5, 1:10, 1:20, 1:50, 1:100, 1:200, 1:500, 1:1000, 1:2000`. When a ratio is infeasible for a dataset/split, the script will log a warning and skip that configuration.
