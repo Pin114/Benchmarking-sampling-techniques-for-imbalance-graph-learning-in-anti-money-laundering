@@ -91,8 +91,10 @@ def intrinsic_features(
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
         train_mask_sampled = sampler(train_mask.bool().to(device_decoder), features_tensor.to(device_decoder), y_tensor.to(device_decoder))
-    else:
+    elif sampling_name == "none" or ratio is None:
         train_mask_sampled = train_mask.bool().to(device_decoder)
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
@@ -156,8 +158,10 @@ def intrinsic_features_with_predictions(
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
         train_mask_sampled = sampler(train_mask.bool().to(device_decoder), features_tensor.to(device_decoder), y_tensor.to(device_decoder))
-    else:
+    elif sampling_name == "none" or ratio is None:
         train_mask_sampled = train_mask.bool().to(device_decoder)
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
@@ -230,7 +234,7 @@ def positional_features(
     else:
         features_df_train_val = pd.concat([features_nx_df_train_val, features_nk_df_train_val], axis=1)
 
-    features_df_train_val["fraud"] = [fraud_dict_test[x] for x in features_df_train_val.index]
+    features_df_train_val["fraud"] = [fraud_dict_test.get(x, 0) for x in features_df_train_val.index]
 
     # Map back to full-sized zeros to allow downstream masking code to work unmodified
     N_nodes = int(ntw_nx_full.number_of_nodes())
@@ -257,7 +261,7 @@ def positional_features(
     else:
         features_df_full = pd.concat([features_nx_df_full, features_nk_df_full], axis=1)
 
-    features_df_full["fraud"] = [fraud_dict_test[x] for x in features_df_full.index]
+    features_df_full["fraud"] = [fraud_dict_test.get(x, 0) for x in features_df_full.index]
     x_features_full = features_df_full.drop(["PSP", "fraud"], axis=1, errors='ignore').values
     features_tensor_full = torch.tensor(x_features_full, dtype=torch.float32)
     y_tensor_full = torch.tensor(features_df_full["fraud"].values, dtype=torch.long)
@@ -274,8 +278,10 @@ def positional_features(
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
         train_mask_sampled = sampler(train_mask.bool(), features_tensor_train_val, y_tensor_train_val)
-    else:
+    elif sampling_name == "none" or ratio is None:
         train_mask_sampled = train_mask.bool()
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     # Extracted splits
     X_train = features_tensor_train_val[train_mask_sampled.cpu()].to(device_decoder)
@@ -349,7 +355,7 @@ def positional_features_with_predictions(
     else:
         features_df_train_val = pd.concat([features_nx_df_train_val, features_nk_df_train_val], axis=1)
 
-    features_df_train_val["fraud"] = [fraud_dict_test[x] for x in features_df_train_val.index]
+    features_df_train_val["fraud"] = [fraud_dict_test.get(x, 0) for x in features_df_train_val.index]
 
     # Map back to full-sized zeros to allow downstream masking code to work unmodified
     N_nodes = int(ntw_nx_full.number_of_nodes())
@@ -376,9 +382,16 @@ def positional_features_with_predictions(
     else:
         features_df_full = pd.concat([features_nx_df_full, features_nk_df_full], axis=1)
 
-    features_df_full["fraud"] = [fraud_dict_test[x] for x in features_df_full.index]
+    features_df_full["fraud"] = [fraud_dict_test.get(x, 0) for x in features_df_full.index]
     x_features_full = features_df_full.drop(["PSP", "fraud"], axis=1, errors='ignore').values
-    features_tensor_full = torch.tensor(x_features_full, dtype=torch.float32)
+    nan_count_full = int(np.isnan(x_features_full).sum())
+    if nan_count_full > 0:
+        print(f"[positional_features_with_predictions] WARNING: {nan_count_full} NaN values found in "
+              f"features_tensor_full (test-time feature table) and replaced with 0.0. This should not "
+              f"happen if the graph-conversion pipeline covers every node; investigate if this fires.")
+    features_tensor_full = torch.nan_to_num(
+        torch.tensor(x_features_full, dtype=torch.float32), nan=0.0, posinf=1e5, neginf=-1e5
+    )
     y_tensor_full = torch.tensor(features_df_full["fraud"].values, dtype=torch.long)
 
     device_decoder = (
@@ -393,8 +406,10 @@ def positional_features_with_predictions(
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
         train_mask_sampled = sampler(train_mask.bool(), features_tensor_train_val, y_tensor_train_val)
-    else:
+    elif sampling_name == "none" or ratio is None:
         train_mask_sampled = train_mask.bool()
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     # Extracted splits
     X_train = features_tensor_train_val[train_mask_sampled.cpu()].to(device_decoder)
@@ -497,8 +512,10 @@ def node2vec_features(
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
         train_mask_sampled = sampler(train_mask.bool(), x, y_tensor)
-    else:
+    elif sampling_name == "none" or ratio is None:
         train_mask_sampled = train_mask.bool()
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -586,8 +603,10 @@ def node2vec_features_with_predictions(
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
         train_mask_sampled = sampler(train_mask.bool(), x, y_tensor)
-    else:
+    elif sampling_name == "none" or ratio is None:
         train_mask_sampled = train_mask.bool()
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     device_decoder = (
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -644,8 +663,10 @@ def GNN_features(
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
         train_mask_np = sampler(train_mask.bool(), ntw_torch.x.cpu(), ntw_torch.y.cpu())
         train_mask_sampled = train_mask_np.to(device)
-    else:
+    elif sampling_name == "none" or ratio is None:
         train_mask_sampled = train_mask.bool().to(device)
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     def _mask_to_device(mask):
         if mask is None:
@@ -737,8 +758,10 @@ def GNN_features_with_predictions(
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
         train_mask_np = sampler(train_mask.bool(), ntw_torch.x.cpu(), ntw_torch.y.cpu())
         train_mask_sampled = train_mask_np.to(device)
-    else:
+    elif sampling_name == "none" or ratio is None:
         train_mask_sampled = train_mask.bool().to(device)
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     def _mask_to_device(mask):
         if mask is None:
@@ -847,11 +870,13 @@ def GNN_features_graphsmote(
         train_mask_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y)
         x_smote, y_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, ntw_torch.edge_index
         edge_attr_smote = None
-    else: # "graph_smote"
+    elif sampling_name == "graph_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
         edge_attr_smote = None
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
@@ -969,11 +994,13 @@ def GNN_features_graphsmote_with_predictions(
         train_mask_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y)
         x_smote, y_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, ntw_torch.edge_index
         edge_attr_smote = None
-    else: # "graph_smote"
+    elif sampling_name == "graph_smote":
         x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
         edge_attr_smote = None
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)

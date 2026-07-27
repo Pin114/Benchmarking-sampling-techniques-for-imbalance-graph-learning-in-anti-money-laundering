@@ -172,29 +172,40 @@ class TargetedNeighbourhoodUndersampling:
             return mask
 
         features_masked = np.nan_to_num(features_np[idx_mask], nan=0.0, posinf=0.0, neginf=0.0)
-        if self.distance_metric == 'cosine':
-            from sklearn.metrics.pairwise import cosine_similarity
-            similarity = cosine_similarity(features_masked)
-            distances = 1.0 - similarity
-        else:
-            from scipy.spatial.distance import cdist
-            distances = cdist(features_masked, features_masked, metric='euclidean')
+        # Nearest-neighbor search via sklearn.neighbors.NearestNeighbors (same API
+        # GATSMOTE already uses in this file) instead of materializing a dense
+        # len(idx_mask) x len(idx_mask) pairwise matrix, which is infeasible at
+        # real train_mask sizes (e.g. ~360TB at 300k nodes). metric='cosine'
+        # matches the previous 1 - cosine_similarity distance scale exactly, so
+        # noise_threshold's meaning is unchanged; sklearn runs this in chunked
+        # brute-force under the hood since ball_tree/kd_tree don't support cosine.
+        metric = 'cosine' if self.distance_metric == 'cosine' else 'euclidean'
+        n_neighbors_query = min(self.k_neighbors + 1, features_masked.shape[0])
+        nbrs = NearestNeighbors(n_neighbors=n_neighbors_query, metric=metric).fit(features_masked)
+        query_distances, query_indices = nbrs.kneighbors(features_masked[minority_indices])
 
         remove_candidates = []
-        for minority_idx in minority_indices:
-            neighbor_ids = np.argsort(distances[minority_idx])[1:self.k_neighbors + 1]
-            # use a simple score over direct neighbors only
-            for neighbor_id in neighbor_ids:
+        for row in range(minority_indices.shape[0]):
+            neighbor_ids = query_indices[row][1:]  # skip self (nearest, distance ~0)
+            neighbor_scores = query_distances[row][1:]
+            for neighbor_id, score in zip(neighbor_ids, neighbor_scores):
                 if train_labels[neighbor_id] in majority_classes:
-                    score = float(distances[minority_idx, neighbor_id])
-                    if score >= self.noise_threshold:
-                        remove_candidates.append(int(idx_mask[neighbor_id]))
+                    if float(score) >= self.noise_threshold:
+                        remove_candidates.append(int(idx_mask[int(neighbor_id)]))
 
         if not remove_candidates:
             return mask
 
+        # remove_ratio is a target majority:minority count ratio, matching the
+        # semantics of `ratio` in random_undersample_mask (evaluation.py), not a
+        # raw fraction of remove_candidates. Convert it into how many majority
+        # nodes need to go to reach that target, then clamp to what the noisy-
+        # neighbor pass actually flagged as removable.
+        majority_count = int(majority_indices.size)
+        minority_count = int(minority_indices.size)
         if self.remove_ratio is not None:
-            target_remove = max(0, int(np.round(len(remove_candidates) * self.remove_ratio)))
+            desired_majority = int(np.round(minority_count * self.remove_ratio))
+            target_remove = max(0, majority_count - desired_majority)
         else:
             target_remove = len(remove_candidates)
         target_remove = min(target_remove, max(0, len(remove_candidates) - self.min_majority_keep))

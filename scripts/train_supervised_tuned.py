@@ -108,7 +108,24 @@ if __name__ == "__main__":
 
         train_mask, val_mask, test_mask = ntw.get_masks()
         fraud_dict = ntw.get_fraud_dict()
-        fraud_dict = {k: 0 if v == 2 else v for k, v in fraud_dict.items()}
+        fraud_dict = {k: v for k, v in fraud_dict.items() if v != 2}
+
+        # fraud_dict_known is deliberately built from the full train_mask, not any
+        # per-ratio/sampling-adjusted subset: it represents what's knowable at
+        # feature-engineering time, independent of which train nodes a given
+        # ratio/sampling cell happens to keep for the decoder's gradient steps.
+        train_node_ids = set(torch.where(train_mask.bool())[0].tolist())
+        val_node_ids = set(torch.where(val_mask.bool())[0].tolist())
+        test_node_ids = set(torch.where(test_mask.bool())[0].tolist())
+        fraud_dict_known = {k: v for k, v in fraud_dict.items() if k in train_node_ids}
+        print(f"[fraud_dict_known] {len(fraud_dict_known)} train-only labels "
+              f"(train_mask size={len(train_node_ids)}); "
+              f"overlap with val_mask: {len(set(fraud_dict_known) & val_node_ids)}, "
+              f"overlap with test_mask: {len(set(fraud_dict_known) & test_node_ids)}")
+        assert not (set(fraud_dict_known) & val_node_ids), \
+            "fraud_dict_known must never contain val_mask node labels"
+        assert not (set(fraud_dict_known) & test_node_ids), \
+            "fraud_dict_known must never contain test_mask node labels"
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         ntw_torch = ntw.get_network_torch().to(device)
@@ -190,7 +207,7 @@ if __name__ == "__main__":
                         )
                     elif method == "positional":
                         ap_score, y_pred_probs, y_true = positional_features_with_predictions(
-                            ntw, train_mask_ratio, val_mask, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=args.lr, fraud_dict_train=fraud_dict, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, ntw_name=ntw_name+"_train_tuned", ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed
+                            ntw, train_mask_ratio, val_mask, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=args.lr, fraud_dict_train=fraud_dict_known, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, ntw_name=ntw_name+"_train_tuned", ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed
                         )
                     elif method == "deepwalk" or method == "node2vec":
                         p_val = 1.0 if method == "deepwalk" else 1.5

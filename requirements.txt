@@ -1,3 +1,4 @@
+imbalanced-learn==0.14.2
 matplotlib-inline==0.1.7
 networkit==11.0
 networkx==3.4.1

@@ -68,6 +68,11 @@ def features_nk(G_nk_or_nx, ntw_name, k=500, seed=None):
             except Exception:
                 try:
                     G_nx = nx.Graph()
+                    # add_edge() only implicitly creates its two endpoint nodes, so
+                    # isolated (degree-0) nodes must be added explicitly first, or
+                    # they silently vanish from G_nx and every feature computed on it.
+                    if hasattr(G_nk_or_nx, 'iterNodes'):
+                        G_nx.add_nodes_from(G_nk_or_nx.iterNodes())
                     if hasattr(G_nk_or_nx, 'iterEdges'):
                         for u, v in G_nk_or_nx.iterEdges():
                             G_nx.add_edge(u, v)
