@@ -93,7 +93,7 @@ def intrinsic_features(
     elif sampling_name == "smote" and ratio is not None:
         features_tensor, y_tensor, train_mask_sampled = smote_mask(train_mask.bool().to(device_decoder), features_tensor.to(device_decoder), y_tensor.to(device_decoder), ratio=ratio)
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
-        sampler = TargetedNeighbourhoodUndersampling(random_state=42)
+        sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=42)
         train_mask_sampled = sampler(train_mask.bool().to(device_decoder), features_tensor.to(device_decoder), y_tensor.to(device_decoder))
     else:
         train_mask_sampled = train_mask.bool().to(device_decoder)
@@ -101,8 +101,8 @@ def intrinsic_features(
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
     
-    X_val = features_tensor[val_mask.bool().cpu()].to(device_decoder)
-    y_val = y_tensor[val_mask.bool().cpu()].to(device_decoder)
+    X_val = features_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+    y_val = y_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
     
     X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
     y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
@@ -168,8 +168,8 @@ def intrinsic_features_with_predictions(
     X_train = features_tensor[train_mask_sampled.cpu()].to(device_decoder)
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder)
     
-    X_val = features_tensor[val_mask.bool().cpu()].to(device_decoder)
-    y_val = y_tensor[val_mask.bool().cpu()].to(device_decoder)
+    X_val = features_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+    y_val = y_tensor[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
     
     X_test = features_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
     y_test = y_tensor[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
@@ -300,8 +300,8 @@ def positional_features(
     y_train = y_tensor_train_val[train_mask_sampled.cpu()].to(device_decoder)
     
     # [Point 2: Add validation set to non-GNN methods]
-    X_val = features_tensor_train_val[val_mask.bool().cpu()].to(device_decoder)
-    y_val = y_tensor_train_val[val_mask.bool().cpu()].to(device_decoder)
+    X_val = features_tensor_train_val[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+    y_val = y_tensor_train_val[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
     
     X_test = features_tensor_full[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
     y_test = y_tensor_full[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
@@ -431,8 +431,8 @@ def positional_features_with_predictions(
     y_train = y_tensor_train_val[train_mask_sampled.cpu()].to(device_decoder)
     
     # [Point 2: Add validation set to non-GNN methods]
-    X_val = features_tensor_train_val[val_mask.bool().cpu()].to(device_decoder)
-    y_val = y_tensor_train_val[val_mask.bool().cpu()].to(device_decoder)
+    X_val = features_tensor_train_val[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
+    y_val = y_tensor_train_val[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder)
     
     X_test = features_tensor_full[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)
     y_test = y_tensor_full[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder)

@@ -4,9 +4,10 @@ import pandas as pd
 def assign_att(u, att, val):
     att[u] = val
 
-def betweenness_nx(G_nx):
-    print("Calculating betweenness...")
-    betweenness_full = nx.betweenness_centrality(G_nx, normalized=True)
+def betweenness_nx(G_nx, k=500, seed=42):
+    print("Calculating sampled betweenness...")
+    sample_size = min(int(k), len(G_nx)) if k is not None else None
+    betweenness_full = nx.betweenness_centrality(G_nx, normalized=True, k=sample_size, seed=seed)
     print("Done")
     
     psp_list = list(G_nx.nodes())

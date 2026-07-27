@@ -190,7 +190,7 @@ if __name__ == "__main__":
                     elif method == "positional":
                         ap_score, y_pred_probs, y_true = positional_features_with_predictions(
                             ntw, train_mask_ratio, test_mask, alpha_pr=0.5, alpha_ppr=0,
-                            n_epochs_decoder=50, lr=args.lr, fraud_dict_test=fraud_dict,
+                            n_epochs_decoder=50, lr=args.lr, fraud_dict_train=fraud_dict, fraud_dict_test=fraud_dict,
                             n_layers_decoder=2, hidden_dim_decoder=16, ntw_name=ntw_name+"_train_tuned",
                             ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs
                         )

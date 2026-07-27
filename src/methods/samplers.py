@@ -76,21 +76,20 @@ class GATSMOTE:
         expanded_mask[:len(mask_np)] = mask_np
         expanded_mask[len(labels_np):] = True
 
-        clean_features = np.nan_to_num(features_np, nan=0.0, posinf=0.0, neginf=0.0)
+        clean_features = np.nan_to_num(features_np[idx_mask], nan=0.0, posinf=0.0, neginf=0.0)
         nbrs = NearestNeighbors(n_neighbors=min(self.k_neighbors + 1, clean_features.shape[0]), algorithm='ball_tree').fit(clean_features)
         new_edges = []
         for synthetic_idx in range(n_synthetic):
             synthetic_feature = X_smote[n_original + synthetic_idx].reshape(1, -1)
             distances, indices = nbrs.kneighbors(synthetic_feature)
             candidate_sources = []
-            for idx in indices[0][1:]:
-                candidate_sources.append(int(idx))
+            for rel_idx in indices[0][1:]:
+                candidate_sources.append(int(idx_mask[int(rel_idx)]))
             if not candidate_sources:
                 continue
             if self.use_predicted_labels_for_homophily and predicted_labels is not None:
-                pred_labels = np.array(predicted_labels)
-                labels_for_score = pred_labels[candidate_sources]
-                same_label = labels_for_score == y_smote[n_original + synthetic_idx]
+                pred_labels = np.array(predicted_labels)[candidate_sources]
+                same_label = pred_labels == y_smote[n_original + synthetic_idx]
             else:
                 same_label = np.array([labels_np[idx] == y_smote[n_original + synthetic_idx] for idx in candidate_sources])
             scores = np.array([1.0 if s else 0.0 for s in same_label], dtype=float)
@@ -184,8 +183,6 @@ class TargetedNeighbourhoodUndersampling:
         remove_candidates = []
         for minority_idx in minority_indices:
             neighbor_ids = np.argsort(distances[minority_idx])[1:self.k_neighbors + 1]
-            neighbor_labels = train_labels[neighbor_ids]
-            majority_neighbor_ids = [int(idx) for idx in neighbor_ids if np.isin(neighbor_labels, majority_classes)[np.where(neighbor_ids == idx)[0][0]] if False]
             # use a simple score over direct neighbors only
             for neighbor_id in neighbor_ids:
                 if train_labels[neighbor_id] in majority_classes:
