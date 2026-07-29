@@ -79,16 +79,17 @@ def infer_metadata(path: Path):
 
 def parse_both_metrics(path: Path):
     """
-    Extracts both AUC-PRC and F1 scores simultaneously from a single log file content.
-    Returns: (auc_val, f1_val)
+    Extracts AUC-PRC, F1_99, and F1_90 scores simultaneously from a single log file content.
+    Returns: (auc_val, f1_99_val, f1_90_val)
     """
     auc_val = None
     f1_val = None
+    f1_90_val = None
     try:
         content = path.read_text(encoding='utf-8').strip()
         if not content:
-            return None, None
-        
+            return None, None, None
+
         lines = content.splitlines()
         # 1. Parse line by line to support multi-line summary formats
         for line in lines:
@@ -97,11 +98,13 @@ def parse_both_metrics(path: Path):
                 key_upper = key.strip().upper()
                 if 'AUC-PRC' in key_upper:
                     auc_val = val.strip()
+                elif 'F1_90' in key_upper:
+                    f1_90_val = val.strip()
                 elif 'F1_99' in key_upper or key_upper == 'F1':
                     f1_val = val.strip()
-                    
+
         # 2. Fallback: Parse inline tokens separated by commas
-        if not auc_val or not f1_val:
+        if not auc_val or not f1_val or not f1_90_val:
             tokens = content.split(',')
             for token in tokens:
                 if ':' in token:
@@ -109,11 +112,13 @@ def parse_both_metrics(path: Path):
                     key_clean = key.strip().upper()
                     if 'AUC-PRC' in key_clean:
                         auc_val = val.strip()
+                    elif 'F1_90' in key_clean:
+                        f1_90_val = val.strip()
                     elif 'F1_99' in key_clean or key_clean == 'F1':
                         f1_val = val.strip()
     except Exception:
         pass
-    return auc_val, f1_val
+    return auc_val, f1_val, f1_90_val
 
 def clean_val(val_str):
     if not val_str or val_str == 'N/A' or val_str == '-':
@@ -159,22 +164,27 @@ def main():
         method, dataset, ratio, sampling, is_tuned = infer_metadata(path)
             
         if dataset in DATASET_MAP and method in METHODS:
-            auc_val, f1_val = parse_both_metrics(path)
+            auc_val, f1_val, f1_90_val = parse_both_metrics(path)
             is_summary = path.name.endswith('_summary.txt')
-            
+
             if auc_val:
                 current_auc = matrix['AUC-PRC'][dataset][sampling][method].get(ratio)
                 if not current_auc or is_summary or ('±' not in str(current_auc) and '±' in str(auc_val)):
                     matrix['AUC-PRC'][dataset][sampling][method][ratio] = auc_val
-                    
+
             if f1_val:
                 current_f1 = matrix['F1_99'][dataset][sampling][method].get(ratio)
                 if not current_f1 or is_summary or ('±' not in str(current_f1) and '±' in str(f1_val)):
                     matrix['F1_99'][dataset][sampling][method][ratio] = f1_val
 
+            if f1_90_val:
+                current_f1_90 = matrix['F1_90'][dataset][sampling][method].get(ratio)
+                if not current_f1_90 or is_summary or ('±' not in str(current_f1_90) and '±' in str(f1_90_val)):
+                    matrix['F1_90'][dataset][sampling][method][ratio] = f1_90_val
+
     sorted_datasets = ['elliptic', 'hi_small', 'hi_medium', 'li_small', 'li_medium']
     
-    for m_type in ['AUC-PRC', 'F1_99']:
+    for m_type in ['AUC-PRC', 'F1_99', 'F1_90']:
         output_lines = []
         output_lines.append("Method X Sampling Table (LR=0.001, Gradient Clipping=1.0)\n")
         

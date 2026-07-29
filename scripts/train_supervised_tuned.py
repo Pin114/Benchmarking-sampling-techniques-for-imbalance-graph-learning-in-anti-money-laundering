@@ -237,11 +237,17 @@ if __name__ == "__main__":
                             )
 
                     from sklearn.metrics import f1_score
-                    cutoff = np.percentile(y_pred_probs, 99)
-                    y_pred_hard = (y_pred_probs >= cutoff).astype(int)
-                    f1_loss = f1_score(y_true, y_pred_hard)
+                    # Both F1_99 and F1_90 are derived from the same single y_pred_probs/y_true
+                    # pass above -- no re-prediction, just two different percentile cutoffs.
+                    cutoff_99 = np.percentile(y_pred_probs, 99)
+                    y_pred_hard_99 = (y_pred_probs >= cutoff_99).astype(int)
+                    f1_99 = f1_score(y_true, y_pred_hard_99)
 
-                    res_str = f"AUC-PRC: {ap_score}, F1_99: {f1_loss}"
+                    cutoff_90 = np.percentile(y_pred_probs, 90)
+                    y_pred_hard_90 = (y_pred_probs >= cutoff_90).astype(int)
+                    f1_90 = f1_score(y_true, y_pred_hard_90)
+
+                    res_str = f"AUC-PRC: {ap_score}, F1_99: {f1_99}, F1_90: {f1_90}"
                     result_file.write_text(res_str, encoding='utf-8')
                     print(f"SUCCESS! -> {result_file.name}")
                 except Exception as e:
