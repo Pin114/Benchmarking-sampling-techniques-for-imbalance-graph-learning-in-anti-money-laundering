@@ -28,6 +28,7 @@ from src.methods.experiments_supervised import (
     GNN_features_with_predictions,
     GNN_features_graphsmote,
     GNN_features_graphsmote_with_predictions,
+    GNN_features_graphens_with_predictions,
     GCN,
     GraphSAGE,
     GAT,
@@ -73,6 +74,11 @@ if __name__ == "__main__":
     parser.add_argument('--tnu-preserve-minority-neighbors', action='store_true', default=True)
     parser.add_argument('--tnu-noise-threshold', type=float, default=0.5)
     parser.add_argument('--tnu-min-majority-keep', type=int, default=1)
+
+    # GraphENS params (Park, Song & Yang, ICLR 2022, Algorithm 1)
+    parser.add_argument('--graphens-warmup', type=int, default=5, help='Epochs of plain mixup (no saliency masking, duplicated neighbors) before switching to the full KL/saliency-blended path; paper tunes among {1,5}')
+    parser.add_argument('--graphens-mask-k', type=float, default=5.0, help="k in K=k*phi_hat: a small integer multiplier giving the COUNT of features masked per synthetic node, NOT a 0-1 fraction (unlike the reference repo's confusingly-named --keep_prob); paper tunes among {1,5,10}")
+    parser.add_argument('--graphens-pred-temp', type=float, default=1.0, help='tau: temperature applied before the confidence-aggregation softmax; paper tunes among {1,2}')
 
     args = parser.parse_args()
     set_seed(args.seed)
@@ -230,6 +236,10 @@ if __name__ == "__main__":
                         if sampling in ["none", "random_undersample"]:
                             ap_score, y_pred_probs, y_true = GNN_features_with_predictions(
                                 ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_ratio, val_mask=val_mask, test_mask=test_mask, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed
+                            )
+                        elif sampling == "graph_ensemble_smote":
+                            ap_score, y_pred_probs, y_true = GNN_features_graphens_with_predictions(
+                                ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_ratio, val_mask=val_mask, test_mask=test_mask, random_state=args.seed, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', ratio=ratio, loss=args.loss, loss_kwargs=loss_kwargs, graphens_warmup=args.graphens_warmup, graphens_mask_k=args.graphens_mask_k, graphens_pred_temp=args.graphens_pred_temp
                             )
                         else:
                             ap_score, y_pred_probs, y_true = GNN_features_graphsmote_with_predictions(

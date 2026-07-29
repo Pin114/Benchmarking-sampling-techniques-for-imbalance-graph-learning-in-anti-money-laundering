@@ -12,12 +12,13 @@ from src.methods.evaluation import (
     smote_mask,
     graph_smote_mask,
     reweighted_graph_smote_mask,
-    graph_ensemble_smote_mask,
+    unweighted_graph_smote_mask,
     EarlyStopping,
     random_undersample_mask
 )
 from src.methods.losses import FocalLoss
 from src.methods.samplers import GATSMOTE, TargetedNeighbourhoodUndersampling
+from src.methods import graphens
 from sklearn.metrics import average_precision_score, f1_score
 import os
 import numpy as np
@@ -34,8 +35,9 @@ def _normalize_sampling_name(sampling):
         "gatsmote": "gatsmote",
         "tnu": "targeted_neighbourhood_undersampling",
         "targeted_neighbourhood_undersampling": "targeted_neighbourhood_undersampling",
-        "graphens": "graph_ensemble_smote",
-        "graph_ensemble_smote": "graph_ensemble_smote",
+        "graphens": "graphens",
+        "graph_ensemble_smote": "graphens",
+        "unweighted_graph_smote": "unweighted_graph_smote",
         "reweighted_graphsmote": "reweighted_graph_smote",
         "reweighted_graph_smote": "reweighted_graph_smote",
     }
@@ -507,7 +509,7 @@ def node2vec_features(
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio, random_state=seed)
     elif sampling_name == "smote" and ratio is not None:
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio, random_state=seed)
-    elif sampling_name in ["graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"] and ratio is not None:
+    elif sampling_name in ["graph_smote", "graphens", "unweighted_graph_smote", "reweighted_graph_smote"] and ratio is not None:
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio, random_state=seed)
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
@@ -598,7 +600,7 @@ def node2vec_features_with_predictions(
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio, random_state=seed)
     elif sampling_name == "smote" and ratio is not None:
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio, random_state=seed)
-    elif sampling_name in ["graph_smote", "graph_ensemble_smote", "reweighted_graph_smote"] and ratio is not None:
+    elif sampling_name in ["graph_smote", "graphens", "unweighted_graph_smote", "reweighted_graph_smote"] and ratio is not None:
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio, random_state=seed)
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
@@ -856,8 +858,8 @@ def GNN_features_graphsmote(
         x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
-    elif sampling_name == "graph_ensemble_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_ensemble_smote_mask(
+    elif sampling_name == "unweighted_graph_smote":
+        x_smote, y_smote, train_mask_smote, edge_index_smote = unweighted_graph_smote_mask(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
         edge_attr_smote = None
@@ -980,8 +982,8 @@ def GNN_features_graphsmote_with_predictions(
         x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
-    elif sampling_name == "graph_ensemble_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_ensemble_smote_mask(
+    elif sampling_name == "unweighted_graph_smote":
+        x_smote, y_smote, train_mask_smote, edge_index_smote = unweighted_graph_smote_mask(
             train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
         edge_attr_smote = None
@@ -1071,4 +1073,238 @@ def GNN_features_graphsmote_with_predictions(
     if val_mask_smote is not None and os.path.exists(checkpoint_path):
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     test_result = evaluate_split(test_mask_smote)
+    return test_result['ap'], test_result['output'].cpu().numpy()[:, 1], test_result['y'].cpu().numpy()
+
+# =====================================================================
+# 6. GNN GraphENS (True Algorithm 1 Implementation, Park et al. ICLR 2022)
+# =====================================================================
+def GNN_features_graphens_with_predictions(
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int,
+    train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None,
+    train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None,
+    use_intrinsic: bool = True, random_state: int = None, patience: int = 10,
+    checkpoint_path: str = "res/checkpoints/best_model_graphens.pt", monitor: str = 'val_ap',
+    ratio=None, loss="ce", loss_kwargs=None,
+    graphens_warmup: int = 5, graphens_mask_k: float = 5.0, graphens_pred_temp: float = 1.0,
+):
+    """GraphENS (Park, Song & Yang, ICLR 2022), Algorithm 1.
+
+    Unlike GraphSMOTE/GATSMOTE/TNU/reweighted-GraphSMOTE
+    (GNN_features_graphsmote_with_predictions), which sample a static
+    augmented graph once before the epoch loop, GraphENS resamples and
+    remixes its synthetic ego-network nodes EVERY epoch, using confidence
+    (o_hat) and saliency (S) state carried over from the previous epoch.
+    That cross-epoch state is closured local state inside this function
+    only. This is deliberately a separate function rather than another
+    branch of GNN_features_graphsmote_with_predictions, so the four
+    techniques that ARE legitimately one-shot stay physically unaffected by
+    this change.
+    """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = model.to(device)
+    early_stopping = EarlyStopping(
+        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
+    )
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
+
+    def _build_weighted_criterion(y_subset):
+        return _build_loss_criterion(y_subset, loss_name=loss, loss_kwargs=loss_kwargs or {}, device=device)
+
+    def _forward(x, edge_index):
+        if use_intrinsic:
+            return model(x, edge_index)
+        ones = torch.ones((x.shape[0], 1), dtype=torch.float32, device=device)
+        return model(ones, edge_index)
+
+    real_edge_index = ntw_torch.edge_index.long()
+    real_edge_index_dev = real_edge_index.to(device)
+    n_real = int(ntw_torch.x.shape[0])
+    y_real_cpu = ntw_torch.y.long().cpu()
+    train_mask_bool = train_mask.bool()
+
+    # Class-conditional pools (Algorithm 1 item 1, binary reduction -- see
+    # graphens.sample_minor_target_pairs docstring): the minority class is
+    # oversampled by drawing v_minor from minor_pool and v_target from
+    # target_pool (majority class), both restricted to the train split.
+    train_labels = y_real_cpu[train_mask_bool.cpu()]
+    unique_classes, class_counts = torch.unique(train_labels, return_counts=True)
+    minority_class = None
+    n_synthetic_total = 0
+    if unique_classes.numel() >= 2:
+        minority_class = unique_classes[torch.argmin(class_counts)].item()
+        majority_class = unique_classes[torch.argmax(class_counts)].item()
+        minority_count = int(class_counts.min().item())
+        majority_count = int(class_counts.max().item())
+        target_minority_count = int(round(majority_count / ratio)) if ratio is not None else majority_count
+        n_synthetic_total = max(0, target_minority_count - minority_count)
+
+    minor_pool = target_pool = None
+    if n_synthetic_total > 0:
+        minor_pool = torch.where(train_mask_bool.cpu() & (y_real_cpu == minority_class))[0]
+        target_pool = torch.where(train_mask_bool.cpu() & (y_real_cpu == majority_class))[0]
+        if minor_pool.numel() == 0 or target_pool.numel() == 0:
+            n_synthetic_total = 0
+
+    # Real-graph adjacency, built once -- real edges are static across
+    # epochs; only the synthetic nodes/edges below are per-epoch.
+    adjacency = graphens.build_adjacency_list(real_edge_index, n_real)
+    degree_tensor = torch.tensor([adjacency[i].numel() for i in range(n_real)], dtype=torch.long)
+
+    def _duplicate_minor_neighbor_edges(minor_idx_batch):
+        # Warmup path (item 12): synthetic node v_mixed inherits v_minor's
+        # real neighbors directly, no blending.
+        src_parts, dst_parts = [], []
+        for i, m in enumerate(minor_idx_batch.tolist()):
+            neigh = adjacency[m]
+            if neigh.numel() == 0:
+                continue
+            src_parts.append(neigh)
+            dst_parts.append(torch.full((neigh.numel(),), n_real + i, dtype=torch.long))
+        if not src_parts:
+            return torch.empty((2, 0), dtype=torch.long)
+        return torch.stack([torch.cat(src_parts), torch.cat(dst_parts)], dim=0)
+
+    def _blended_neighbor_edges(minor_idx_batch, target_idx_batch, phi_hat):
+        # Full path (items 8-9): Eq. 1 blended adjacency; neighbor count is
+        # r ~ p_degree(D), the graph's own degree distribution, capped at
+        # deg(v_minor) -- NOT simply deg(v_minor) directly (paper Section
+        # 4.1 + reference gens.py:204-208). Directional: sampled real
+        # neighbor -> synthetic node only (never symmetrized -- see
+        # edge_index_epoch assembly below).
+        minor_degrees = degree_tensor[minor_idx_batch]
+        aug_degrees = graphens.sample_augmented_degree(degree_tensor, cap=minor_degrees)
+        src_parts, dst_parts = [], []
+        for i in range(minor_idx_batch.shape[0]):
+            m = int(minor_idx_batch[i].item())
+            t = int(target_idx_batch[i].item())
+            minor_neighbors = adjacency[m]
+            target_neighbors = adjacency[t]
+            num_samples = int(aug_degrees[i].item())
+            sampled = graphens.blended_neighbor_sampling(
+                minor_neighbors, target_neighbors, float(phi_hat[i].item()), num_samples
+            )
+            if sampled.numel() == 0:
+                continue
+            src_parts.append(sampled)
+            dst_parts.append(torch.full((sampled.numel(),), n_real + i, dtype=torch.long))
+        if not src_parts:
+            return torch.empty((2, 0), dtype=torch.long)
+        return torch.stack([torch.cat(src_parts), torch.cat(dst_parts)], dim=0)
+
+    # Cross-epoch state (Algorithm 1 items 3, 10, 11): o_hat^(t-1) and
+    # S^(t-1), both computed at the end of the previous train_epoch() call
+    # and consumed at the start of the next. None until the first epoch has
+    # run once, which forces the warmup/simple path regardless of
+    # --graphens-warmup (there is no "previous epoch" before epoch 0).
+    state = {"prev_confidence": None, "prev_saliency": None, "last_path": None}
+
+    def train_epoch(epoch_idx):
+        model.train()
+        optimizer.zero_grad()
+
+        real_x = ntw_torch.x.to(device).detach().clone().requires_grad_(True)
+
+        if n_synthetic_total > 0:
+            minor_idx, target_idx = graphens.sample_minor_target_pairs(minor_pool, [target_pool], n_synthetic_total)
+            minor_features = real_x[minor_idx.to(device)]
+            target_features = real_x[target_idx.to(device)]
+
+            use_warmup_path = (
+                epoch_idx < graphens_warmup
+                or state["prev_confidence"] is None
+                or state["prev_saliency"] is None
+            )
+            if use_warmup_path:
+                mixed_features, _lam = graphens.warmup_mixup(minor_features, target_features)
+                new_edges = _duplicate_minor_neighbor_edges(minor_idx)
+            else:
+                minor_confidence = state["prev_confidence"][minor_idx]
+                target_confidence = state["prev_confidence"][target_idx]
+                phi_hat = graphens.compute_mixing_ratio(minor_confidence, target_confidence)
+                target_saliency = state["prev_saliency"][target_idx]
+                mixed_features, _lam = graphens.saliency_masked_mixup(
+                    minor_features, target_features, target_saliency, phi_hat, graphens_mask_k
+                )
+                new_edges = _blended_neighbor_edges(minor_idx, target_idx, phi_hat.detach().cpu())
+
+            x_epoch = torch.cat([real_x, mixed_features], dim=0)
+            edge_index_epoch = torch.cat([real_edge_index_dev, new_edges.to(device)], dim=1)
+            y_epoch = torch.cat([
+                ntw_torch.y.long().to(device),
+                torch.full((n_synthetic_total,), minority_class, dtype=torch.long, device=device)
+            ])
+            train_mask_epoch = torch.cat([
+                train_mask_bool.to(device),
+                torch.ones(n_synthetic_total, dtype=torch.bool, device=device)
+            ])
+            path_used = "warmup" if use_warmup_path else "full"
+        else:
+            x_epoch = real_x
+            edge_index_epoch = real_edge_index_dev
+            y_epoch = ntw_torch.y.long().to(device)
+            train_mask_epoch = train_mask_bool.to(device)
+            path_used = "no_augmentation"
+
+        out, _ = _forward(x_epoch, edge_index_epoch)
+        y_train = y_epoch[train_mask_epoch]
+        criterion = _build_weighted_criterion(y_train)
+        loss_val = _compute_loss(criterion, out[train_mask_epoch], y_train, mask=train_mask_epoch)
+        loss_val.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        # Reuse this epoch's own backward pass for saliency (item 11): no
+        # second backward. real_x.grad already reflects both nodes' own
+        # loss AND any loss routed through synthetic nodes derived from
+        # them (autograd chains mixed_features back through real_x).
+        # Paper Section 4.2 defines saliency as the MAGNITUDE of the
+        # gradient, s_(v,i) = |[dL/dX]_(v,i)| -- abs() here, not the raw
+        # signed gradient (confirmed against the paper PDF; the reference
+        # code's saliency_dst.abs() agrees).
+        this_epoch_saliency = real_x.grad.detach().abs().clone()
+        with torch.no_grad():
+            this_epoch_confidence = graphens.aggregate_confidence(
+                out[:n_real].detach(), real_edge_index_dev, temperature=graphens_pred_temp
+            )
+        state["prev_saliency"] = this_epoch_saliency
+        state["prev_confidence"] = this_epoch_confidence
+        state["last_path"] = path_used
+
+        return loss_val.item()
+
+    def evaluate_split(mask):
+        # GraphENS only augments the TRAINING graph; val/test nodes were
+        # never eligible as v_minor/v_target sources, so evaluation always
+        # runs on the plain real graph, no padding needed.
+        model.eval()
+        with torch.no_grad():
+            out, _ = _forward(ntw_torch.x.to(device), real_edge_index_dev)
+            y = ntw_torch.y.long().to(device)
+            mask_dev = mask.bool().to(device)
+            out_filtered = out[:mask_dev.shape[0]][mask_dev]
+            y_filtered = y[:mask_dev.shape[0]][mask_dev]
+            if out_filtered.shape[0] == 0:
+                return None
+            criterion = _build_weighted_criterion(y_filtered)
+            loss_val = _compute_loss(criterion, out_filtered, y_filtered, mask=mask_dev).item()
+            y_hat = out_filtered.softmax(dim=1)
+            y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
+            ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
+            return {'loss': loss_val, 'ap': ap_score, 'output': y_hat, 'y': y_filtered}
+
+    for epoch in range(n_epochs):
+        train_loss = train_epoch(epoch)
+        if val_mask is not None:
+            val_result = evaluate_split(val_mask)
+            if val_result is not None:
+                print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_loss={val_result['loss']:.6f} | val_ap={val_result['ap']:.6f} | graphens_path={state['last_path']}")
+                metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
+                early_stopping(metric_to_monitor, model)
+        if early_stopping.early_stop:
+            print(f"[graphens] Early Stop triggered!")
+            break
+
+    if val_mask is not None and os.path.exists(checkpoint_path):
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    test_result = evaluate_split(test_mask)
     return test_result['ap'], test_result['output'].cpu().numpy()[:, 1], test_result['y'].cpu().numpy()

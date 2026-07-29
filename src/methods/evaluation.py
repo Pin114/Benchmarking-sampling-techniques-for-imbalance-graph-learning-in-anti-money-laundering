@@ -436,7 +436,14 @@ def reweighted_graph_smote_mask(mask, features, labels, edge_index, k_neighbors=
         
     return expanded_features, expanded_labels, expanded_mask, expanded_edge_index, expanded_edge_weights
 
-def graph_ensemble_smote_mask(mask, features, labels, edge_index, k_neighbors=5, ratio=None, random_state=None):
+def unweighted_graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, ratio=None, random_state=None):
+    # Formerly named graph_ensemble_smote_mask. Renamed because it never implemented
+    # GraphENS (Park et al., ICLR 2022) -- it's SMOTE feature interpolation plus
+    # unconditional bidirectional k-NN edge attachment, mechanically identical to
+    # graph_smote_mask (this file) except for wider nan_to_num clip bounds and a
+    # different k_neighbors clamp base. It differs from reweighted_graph_smote_mask
+    # (above) only in that it does not produce edge weights -- hence "unweighted".
+    # The real GraphENS lives in src/methods/graphens.py + GNN_features_graphens_with_predictions.
     is_torch_feat = isinstance(features, torch.Tensor)
     is_torch_labels = isinstance(labels, torch.Tensor)
     is_torch_mask = isinstance(mask, torch.Tensor)

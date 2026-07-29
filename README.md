@@ -67,7 +67,8 @@ The pipeline natively supports **five major benchmark datasets**:
 - **SMOTE**: Feature-space synthetic minority over-sampling applied to intrinsic/positional features using `imblearn`.
 - **GraphSMOTE**: Feature-space interpolation combined with heuristic edge reconstruction.
 - **Reweighted GraphSMOTE**: GraphSMOTE augmented with continuous cosine-similarity edge weights.
-- **GraphENS (Graph Ensemble SMOTE)**: Structural and feature-space ensemble over-sampling tailored for GNN class imbalance.
+- **Unweighted GraphSMOTE**: A GraphSMOTE variant mechanically identical to GraphSMOTE (SMOTE feature interpolation + unconditional k-NN edge attachment) apart from clip-bound/k-neighbor-clamp details. Formerly mislabeled `graph_ensemble_smote`/GraphENS in this repo; renamed once the real GraphENS was implemented (see below). Not part of the default sweep, but reachable via the `unweighted_graph_smote` sampler name.
+- **GraphENS**: Full implementation of Park, Song & Yang (ICLR 2022), *"GraphENS: Neighbor-Aware Ego Network Synthesis for Class-Imbalanced Node Classification"* — see the dedicated section below.
 
 ---
 
@@ -133,8 +134,10 @@ This update adds support for:
 These methods are implemented with strict train-mask-only operations to avoid label leakage. The sampler canonical names are:
 
 ```
-none, rus, smote, graph_smote, gatsmote, targeted_neighbourhood_undersampling, graph_ensemble_smote, reweighted_graph_smote
+none, rus, smote, graph_smote, gatsmote, targeted_neighbourhood_undersampling, graphens, unweighted_graph_smote, reweighted_graph_smote
 ```
+
+`graph_ensemble_smote` remains accepted as an alias for `graphens` (this is the name already used by the default GCN/SAGE/GAT/GIN sweep config).
 
 The tuning script `scripts/train_supervised_tuned.py` includes an expanded imbalance ratio grid and accepts `--loss` and sampler-specific hyperparameters. Example commands are described below.
 
@@ -146,3 +149,22 @@ python scripts/train_supervised_tuned.py --network hi_small --loss focal --focal
 
 ### Note on imbalance ratios
 The tuning grid now supports: `1:1, 1:2, 1:5, 1:10, 1:20, 1:50, 1:100, 1:200, 1:500, 1:1000, 1:2000`. When a ratio is infeasible for a dataset/split, the script will log a warning and skip that configuration.
+
+## 🆕 GraphENS (full Algorithm 1 implementation)
+
+`graphens` (alias: `graph_ensemble_smote`, for GCN/SAGE/GAT/GIN only) implements Park, Song & Yang, *"GraphENS: Neighbor-Aware Ego Network Synthesis for Class-Imbalanced Node Classification"* (ICLR 2022), Algorithm 1, in full — not a feature-space SMOTE approximation. Pure algorithm primitives live in `src/methods/graphens.py`; the per-epoch training loop lives in `GNN_features_graphens_with_predictions` (`src/methods/experiments_supervised.py`).
+
+Unlike GraphSMOTE/GATSMOTE/TNU/Reweighted-GraphSMOTE, which sample a static augmented graph once before training starts, GraphENS **resynthesizes its minority ego networks every epoch**:
+- Each epoch, minority (`v_minor`) and majority (`v_target`) training nodes are paired, mixed via a saliency-masked feature blend (`λ ~ Beta(2,2)`, masking driven by the target node's own gradient-based saliency from the previous epoch), and wired to a blended, degree-matched sample of both nodes' real neighbors — added as directed, **incoming-only** edges onto the synthetic node (never symmetrized), per the paper's message-passing footnote.
+- The blend ratio `φ̂ = sigmoid(KL(ô_minor ‖ ô_target))` is provably ≥ 0.5 (KL divergence is non-negative), so the synthetic node's neighbor/feature distribution never leans more on the target node than on the minority source.
+- Saliency and confidence (`ô`) are both recomputed at the end of every epoch and reused as next epoch's inputs; saliency reuses that epoch's own backward pass (no extra backward call).
+- For the first `--graphens-warmup` epochs (and always for the very first epoch, since there is no prior-epoch state yet), a simpler path runs instead: plain mixup with no saliency masking, and synthetic nodes simply inherit `v_minor`'s real neighbors.
+
+**Confirmed implementation choice on a paper/code discrepancy**: confidence aggregation `ô` mean-pools each node's raw logits across its ego network (itself + real neighbors) *then* applies softmax once — matching the official reference implementation (github.com/JoonHyung-Park/GraphENS) rather than Algorithm 1's literal text, which describes softmaxing each neighbor individually before averaging. The two are not equivalent; this repo deliberately follows the authors' validated code over their paper's prose. See the code comment on `graphens.aggregate_confidence` for detail.
+
+CLI params (`scripts/train_supervised_tuned.py`):
+- `--graphens-warmup` (default `5`) — epochs of the simple warmup path before switching to the full KL/saliency-blended path (paper tunes among `{1, 5}`).
+- `--graphens-mask-k` (default `5.0`) — the `k` in `K = k·φ̂`, a small integer multiplier giving the **count** of features masked per synthetic node, not a 0–1 fraction (unlike the reference repo's `--keep_prob`; paper tunes among `{1, 5, 10}`).
+- `--graphens-pred-temp` (default `1.0`) — temperature applied before the confidence-aggregation softmax (paper tunes among `{1, 2}`).
+
+Evaluation always runs on the plain, unaugmented graph (confirmed against the reference implementation's own `test()`/validation-loss code, which never forwards on its per-epoch synthesized graph either) — only the training graph is resynthesized each epoch.
