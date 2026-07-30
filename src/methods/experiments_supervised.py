@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 from src.methods.utils.functionsNetworkX import *
 from src.methods.utils.functionsNetworKit import *
 from src.methods.utils.functionsTorch import *
@@ -67,6 +66,39 @@ def _compute_loss(criterion, out, y, mask=None):
     if isinstance(criterion, FocalLoss):
         return criterion(out, y, mask=mask)
     return criterion(out, y)
+
+def _build_neighbor_loader(ntw_torch, input_mask, batch_size, num_neighbors, shuffle):
+    """GraphSAGE's mean/pool aggregator is defined for a sample-and-aggregate neighborhood
+    (Hamilton et al. 2017), but every GNN_features* pass here otherwise forwards the whole
+    graph in one shot -- SAGE was getting no actual neighbor sampling. NeighborLoader is
+    built on a CPU copy (its C++ sampler expects CPU tensors) with `input_mask` as the seed
+    nodes; each yielded mini-batch places the seed nodes first (`batch.batch_size` of them),
+    followed by their sampled multi-hop neighbors used only for message passing.
+    """
+    from torch_geometric.loader import NeighborLoader
+    graph_cpu = ntw_torch.clone().cpu()
+    return NeighborLoader(
+        graph_cpu, num_neighbors=num_neighbors, batch_size=batch_size,
+        input_nodes=input_mask.cpu(), shuffle=shuffle,
+    )
+
+def _try_build_neighbor_loader(ntw_torch, input_mask, batch_size, num_neighbors, shuffle):
+    """NeighborLoader's sampler needs pyg-lib or torch-sparse compiled extensions; on an
+    environment without either (GNN.py's own _ensure_torch_geometric_layers already warns
+    about this at import time) it raises ImportError only once the loader is actually
+    iterated, not at construction. Probe with one batch here so callers can fall back to
+    full-graph training instead of crashing every GraphSAGE run in such environments.
+    """
+    try:
+        loader = _build_neighbor_loader(ntw_torch, input_mask, batch_size, num_neighbors, shuffle)
+        next(iter(loader))  # actually triggers the C++ sampler; construction alone does not.
+        # Re-iterating the same DataLoader object below (a fresh `for batch in loader`) starts
+        # a new iterator from scratch -- this probe batch isn't lost, just not reused.
+        return loader
+    except ImportError as e:
+        print(f"[GNN_features] WARNING: neighbor-sampling unavailable ({e}); "
+              f"falling back to full-graph training for GraphSAGE.")
+        return None
 
 # =====================================================================
 # 1. Intrinsic Features (With and Without Predictions)
@@ -670,7 +702,7 @@ def node2vec_features_with_predictions(
 # 4. Standard GNN Methods (Validation, Slicing Protected)
 # =====================================================================
 def GNN_features(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, clip_norm=1.0
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, sage_batch_size=1024, sage_num_neighbors=None
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -713,8 +745,35 @@ def GNN_features(
     def _build_weighted_criterion(y_subset):
         return _build_loss_criterion(y_subset, loss_name=loss, loss_kwargs=loss_kwargs or {}, device=device)
 
+    # GraphSAGE gets real neighbor-sampling mini-batch training instead of the full-graph
+    # forward every other architecture uses -- see _build_neighbor_loader. Evaluation stays
+    # full-batch (standard transductive-eval practice; the graphs here are small enough that
+    # eval memory was never the bottleneck training was).
+    use_neighbor_sampling = isinstance(model, GraphSAGE)
+    if use_neighbor_sampling:
+        num_neighbors = sage_num_neighbors or [15] * max(int(model.n_layers), 1)
+        train_loader = _try_build_neighbor_loader(ntw_torch, train_mask_sampled, sage_batch_size, num_neighbors, shuffle=True)
+        use_neighbor_sampling = train_loader is not None
+
     def train_epoch():
         model.train()
+        if use_neighbor_sampling:
+            total_loss, total_seeds = 0.0, 0
+            for batch in train_loader:
+                batch = batch.to(device)
+                optimizer.zero_grad()
+                bx = batch.x if use_intrinsic else torch.ones((batch.x.shape[0], 1), dtype=torch.float32, device=device)
+                out, _ = model(bx, batch.edge_index)
+                seed_n = batch.batch_size
+                y_batch = batch.y[:seed_n].long()
+                criterion = _build_weighted_criterion(y_batch)
+                loss_val = _compute_loss(criterion, out[:seed_n], y_batch)
+                loss_val.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                total_loss += loss_val.item() * seed_n
+                total_seeds += seed_n
+            return total_loss / max(total_seeds, 1)
         optimizer.zero_grad()
         out, _ = _forward(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
         y = ntw_torch.y.long().to(device)
@@ -765,7 +824,7 @@ def GNN_features(
     return test_result['ap'], test_result['f1']
 
 def GNN_features_with_predictions(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, clip_norm=1.0
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, sage_batch_size=1024, sage_num_neighbors=None
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -808,8 +867,33 @@ def GNN_features_with_predictions(
     def _build_weighted_criterion(y_subset):
         return _build_loss_criterion(y_subset, loss_name=loss, loss_kwargs=loss_kwargs or {}, device=device)
 
+    # See GNN_features for rationale: GraphSAGE gets real neighbor-sampling mini-batches,
+    # every other architecture keeps the full-graph forward. Eval stays full-batch.
+    use_neighbor_sampling = isinstance(model, GraphSAGE)
+    if use_neighbor_sampling:
+        num_neighbors = sage_num_neighbors or [15] * max(int(model.n_layers), 1)
+        train_loader = _try_build_neighbor_loader(ntw_torch, train_mask_sampled, sage_batch_size, num_neighbors, shuffle=True)
+        use_neighbor_sampling = train_loader is not None
+
     def train_epoch():
         model.train()
+        if use_neighbor_sampling:
+            total_loss, total_seeds = 0.0, 0
+            for batch in train_loader:
+                batch = batch.to(device)
+                optimizer.zero_grad()
+                bx = batch.x if use_intrinsic else torch.ones((batch.x.shape[0], 1), dtype=torch.float32, device=device)
+                out, _ = model(bx, batch.edge_index)
+                seed_n = batch.batch_size
+                y_batch = batch.y[:seed_n].long()
+                criterion = _build_weighted_criterion(y_batch)
+                loss_val = _compute_loss(criterion, out[:seed_n], y_batch)
+                loss_val.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                total_loss += loss_val.item() * seed_n
+                total_seeds += seed_n
+            return total_loss / max(total_seeds, 1)
         optimizer.zero_grad()
         out, _ = _forward(ntw_torch.x.to(device), ntw_torch.edge_index.to(device))
         y = ntw_torch.y.long().to(device)
@@ -912,9 +996,7 @@ def _build_graphsmote_sampling(
 
 
 def GNN_features_graphsmote(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, clip_norm=1.0,
-    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=1.0, gatsmote_lambda2=1.0, gatsmote_use_predicted_labels_for_homophily=False,
-    tnu_k_neighbors=10, tnu_distance_metric='cosine', tnu_remove_ratio=None, tnu_noise_threshold=0.5, tnu_min_majority_keep=1, tnu_preserve_minority_neighbors=True,
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, gatsmote_k_neighbors=5, gatsmote_attention_heads=1, gatsmote_edge_threshold=0.5, gatsmote_homophily_weight=1.0, gatsmote_use_predicted_labels_for_homophily=False
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -929,23 +1011,40 @@ def GNN_features_graphsmote(
         return model(ones, edge_index, edge_attr=edge_attr)
 
     sampling_name = _normalize_sampling_name(sampling)
-    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match = (
-        _build_graphsmote_sampling(
-            sampling_name, train_mask, ntw_torch, k_neighbors, ratio, random_state,
-            gatsmote_k_neighbors, gatsmote_heads, gatsmote_edge_threshold, gatsmote_lambda1, gatsmote_lambda2,
-            gatsmote_use_predicted_labels_for_homophily,
-            tnu_k_neighbors, tnu_distance_metric, tnu_remove_ratio, tnu_noise_threshold,
-            tnu_min_majority_keep, tnu_preserve_minority_neighbors,
-            device,
+    # ratio=None ("Original" row in the sweep) must mean "no resampling", matching the
+    # semantics every other sampling family already uses (GNN_features/intrinsic_features
+    # gate their sampling branches on `and ratio is not None`, falling back to the
+    # untouched graph when ratio is None). Without this branch, graph_smote_mask/GATSMOTE
+    # would still fully rebalance to ~1:1 and TNU would still remove every flagged noisy
+    # node under ratio=None, silently contradicting the "original distribution" label.
+    if ratio is None:
+        x_smote, y_smote, train_mask_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, train_mask.bool(), ntw_torch.edge_index
+        edge_attr_smote = None
+    elif sampling_name == "reweighted_graph_smote":
+        x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
-    )
-    # Checkpointing/restoring must cover the edge generator too when it exists, otherwise
-    # early-stopping would restore the best classifier weights alongside a GATEdgeGenerator
-    # left at whatever state training happened to end on -- a state the classifier never saw.
-    checkpoint_target = nn.ModuleList([model, gat_edge_gen]) if gat_edge_gen is not None else model
-    early_stopping = EarlyStopping(
-        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
-    )
+    elif sampling_name == "unweighted_graph_smote":
+        x_smote, y_smote, train_mask_smote, edge_index_smote = unweighted_graph_smote_mask(
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
+        )
+        edge_attr_smote = None
+    elif sampling_name == "gatsmote":
+        sampler = GATSMOTE(k_neighbors=gatsmote_k_neighbors, attention_heads=gatsmote_attention_heads, edge_threshold=gatsmote_edge_threshold, homophily_weight=gatsmote_homophily_weight, ratio=ratio, use_predicted_labels_for_homophily=gatsmote_use_predicted_labels_for_homophily, random_state=random_state)
+        x_smote, y_smote, train_mask_smote, edge_index_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index)
+        edge_attr_smote = None
+    elif sampling_name == "targeted_neighbourhood_undersampling":
+        sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=random_state)
+        train_mask_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y)
+        x_smote, y_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, ntw_torch.edge_index
+        edge_attr_smote = None
+    elif sampling_name == "graph_smote":
+        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
+        )
+        edge_attr_smote = None
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
@@ -1037,9 +1136,7 @@ def GNN_features_graphsmote(
     return test_result['ap'], test_result['f1']
 
 def GNN_features_graphsmote_with_predictions(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, clip_norm=1.0,
-    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=1.0, gatsmote_lambda2=1.0, gatsmote_use_predicted_labels_for_homophily=False,
-    tnu_k_neighbors=10, tnu_distance_metric='cosine', tnu_remove_ratio=None, tnu_noise_threshold=0.5, tnu_min_majority_keep=1, tnu_preserve_minority_neighbors=True,
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, gatsmote_k_neighbors=5, gatsmote_attention_heads=1, gatsmote_edge_threshold=0.5, gatsmote_homophily_weight=1.0, gatsmote_use_predicted_labels_for_homophily=False
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -1054,20 +1151,40 @@ def GNN_features_graphsmote_with_predictions(
         return model(ones, edge_index, edge_attr=edge_attr)
 
     sampling_name = _normalize_sampling_name(sampling)
-    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match = (
-        _build_graphsmote_sampling(
-            sampling_name, train_mask, ntw_torch, k_neighbors, ratio, random_state,
-            gatsmote_k_neighbors, gatsmote_heads, gatsmote_edge_threshold, gatsmote_lambda1, gatsmote_lambda2,
-            gatsmote_use_predicted_labels_for_homophily,
-            tnu_k_neighbors, tnu_distance_metric, tnu_remove_ratio, tnu_noise_threshold,
-            tnu_min_majority_keep, tnu_preserve_minority_neighbors,
-            device,
+    # ratio=None ("Original" row in the sweep) must mean "no resampling", matching the
+    # semantics every other sampling family already uses (GNN_features/intrinsic_features
+    # gate their sampling branches on `and ratio is not None`, falling back to the
+    # untouched graph when ratio is None). Without this branch, graph_smote_mask/GATSMOTE
+    # would still fully rebalance to ~1:1 and TNU would still remove every flagged noisy
+    # node under ratio=None, silently contradicting the "original distribution" label.
+    if ratio is None:
+        x_smote, y_smote, train_mask_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, train_mask.bool(), ntw_torch.edge_index
+        edge_attr_smote = None
+    elif sampling_name == "reweighted_graph_smote":
+        x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
         )
-    )
-    checkpoint_target = nn.ModuleList([model, gat_edge_gen]) if gat_edge_gen is not None else model
-    early_stopping = EarlyStopping(
-        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
-    )
+    elif sampling_name == "unweighted_graph_smote":
+        x_smote, y_smote, train_mask_smote, edge_index_smote = unweighted_graph_smote_mask(
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
+        )
+        edge_attr_smote = None
+    elif sampling_name == "gatsmote":
+        sampler = GATSMOTE(k_neighbors=gatsmote_k_neighbors, attention_heads=gatsmote_attention_heads, edge_threshold=gatsmote_edge_threshold, homophily_weight=gatsmote_homophily_weight, ratio=ratio, use_predicted_labels_for_homophily=gatsmote_use_predicted_labels_for_homophily, random_state=random_state)
+        x_smote, y_smote, train_mask_smote, edge_index_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index)
+        edge_attr_smote = None
+    elif sampling_name == "targeted_neighbourhood_undersampling":
+        sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=random_state)
+        train_mask_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y)
+        x_smote, y_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, ntw_torch.edge_index
+        edge_attr_smote = None
+    elif sampling_name == "graph_smote":
+        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
+        )
+        edge_attr_smote = None
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
@@ -1160,7 +1277,6 @@ def GNN_features_graphsmote_with_predictions(
 # =====================================================================
 def GNN_features_graphens_with_predictions(
     ntw_torch, model: nn.Module, lr: float, n_epochs: int,
-    train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None,
     train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None,
     use_intrinsic: bool = True, random_state: int = None, patience: int = 10,
     checkpoint_path: str = "res/checkpoints/best_model_graphens.pt", monitor: str = 'val_ap',

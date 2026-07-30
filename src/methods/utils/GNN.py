@@ -76,7 +76,11 @@ class GCN(nn.Module):
 
         return out, h
 
-class GraphSAGE(nn.Module): #Neighbourhood sampling only in training step (via DataLoader)
+class GraphSAGE(nn.Module):  # Neighbor-sampling mini-batches at train time -- see
+    # _build_neighbor_loader/GNN_features(_with_predictions) in experiments_supervised.py,
+    # which route training through a NeighborLoader when the model is a GraphSAGE instance.
+    # This class itself is architecture-agnostic to that (forward() takes whatever subgraph
+    # it's handed, full or sampled); evaluation still runs full-batch (see the callers).
     def __init__(
             self, 
             edge_index: Tensor,
