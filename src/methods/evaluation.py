@@ -268,278 +268,26 @@ def graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, ratio=No
         expanded_mask[:len(mask_np)] = mask_np
         expanded_mask[len(labels_np):] = True
         
-        clean_features = np.nan_to_num(features_np, nan=0.0, posinf=0.0, neginf=0.0)
-        nbrs = NearestNeighbors(n_neighbors=min(k_neighbors + 1, clean_features.shape[0]), algorithm='ball_tree').fit(clean_features)
-        new_edges = []
-        for synthetic_idx in range(n_synthetic):
-            synthetic_feature = X_smote[n_original + synthetic_idx].reshape(1, -1)
-            _, indices = nbrs.kneighbors(synthetic_feature)
-            for neighbor_idx in indices[0][1:]:
-                new_edges.append([int(neighbor_idx), int(features_np.shape[0] + synthetic_idx)])
-                new_edges.append([int(features_np.shape[0] + synthetic_idx), int(neighbor_idx)])
-        if new_edges:
-            new_edges_array = np.array(new_edges).T
-            expanded_edge_index = np.hstack([edge_index_np, new_edges_array]) if edge_index_np.size else new_edges_array
-        else:
-            expanded_edge_index = edge_index_np
-            
-    if is_torch_feat:
-        expanded_features = torch.from_numpy(expanded_features).to(features.dtype).to(features.device)
-    if is_torch_labels:
-        expanded_labels = torch.from_numpy(expanded_labels).to(labels.device)
-    if is_torch_mask:
-        expanded_mask = torch.from_numpy(expanded_mask).to(mask.device)
-    if is_torch_edge:
-        expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
-        
-    return expanded_features, expanded_labels, expanded_mask, expanded_edge_index
-
-def reweighted_graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, ratio=None, similarity_metric='cosine', random_state=None):
-    is_torch_feat = isinstance(features, torch.Tensor)
-    is_torch_labels = isinstance(labels, torch.Tensor)
-    is_torch_mask = isinstance(mask, torch.Tensor)
-    is_torch_edge = isinstance(edge_index, torch.Tensor)
-    
-    if is_torch_feat:
-        features_np = features.cpu().numpy()
-    else:
-        features_np = np.array(features)
-    if is_torch_labels:
-        labels_np = labels.cpu().numpy()
-    else:
-        labels_np = np.array(labels)
-    if is_torch_mask:
-        mask_np = mask.cpu().numpy().astype(bool)
-    else:
-        mask_np = np.array(mask).astype(bool)
-    if is_torch_edge:
-        edge_index_np = edge_index.cpu().numpy()
-    else:
-        edge_index_np = np.array(edge_index)
-        
-    mask_np = np.atleast_1d(mask_np).astype(bool)
-    idx_mask = np.where(mask_np)[0]
-    if idx_mask.size == 0:
-        expanded_edge_weights = np.ones(max(edge_index_np.shape[1], 0), dtype=float) if edge_index_np.size else np.array([], dtype=float)
-        if is_torch_feat:
-            features = torch.from_numpy(features_np).to(features.dtype).to(features.device)
-        if is_torch_labels:
-            labels = torch.from_numpy(labels_np).to(labels.device)
-        if is_torch_mask:
-            mask = torch.from_numpy(mask_np).to(mask.device)
-        if is_torch_edge:
-            edge_index = torch.from_numpy(edge_index_np).to(edge_index.device)
-            expanded_edge_weights = torch.from_numpy(expanded_edge_weights).to(edge_index.device)
-        return features, labels, mask, edge_index, expanded_edge_weights
-        
-    features_masked = features_np[idx_mask]
-    features_masked = np.nan_to_num(features_masked, nan=0.0, posinf=0.0, neginf=0.0)
-    labels_masked = labels_np[idx_mask]
-    
-    unique_classes, class_counts = np.unique(labels_masked, return_counts=True)
-    if unique_classes.size < 2:
-        expanded_edge_weights = np.ones(max(edge_index_np.shape[1], 0), dtype=float) if edge_index_np.size else np.array([], dtype=float)
-        if is_torch_feat:
-            features = torch.from_numpy(features_np).to(features.dtype).to(features.device)
-        if is_torch_labels:
-            labels = torch.from_numpy(labels_np).to(labels.device)
-        if is_torch_mask:
-            mask = torch.from_numpy(mask_np).to(mask.device)
-        if is_torch_edge:
-            edge_index = torch.from_numpy(edge_index_np).to(edge_index.device)
-            expanded_edge_weights = torch.from_numpy(expanded_edge_weights).to(edge_index.device)
-        return features, labels, mask, edge_index, expanded_edge_weights
-        
-    minority_class = unique_classes[np.argmin(class_counts)]
-    majority_class = unique_classes[np.argmax(class_counts)]
-    minority_count = np.min(class_counts)
-    majority_count = np.max(class_counts)
-    
-    if ratio is not None:
-        target_minority_count = int(np.round(majority_count / ratio))
-    else:
-        target_minority_count = majority_count
-        
-    if target_minority_count <= minority_count:
-        expanded_edge_weights = np.ones(max(edge_index_np.shape[1], 0), dtype=float) if edge_index_np.size else np.array([], dtype=float)
-        if is_torch_feat:
-            features = torch.from_numpy(features_np).to(features.dtype).to(features.device)
-        if is_torch_labels:
-            labels = torch.from_numpy(labels_np).to(labels.device)
-        if is_torch_mask:
-            mask = torch.from_numpy(mask_np).to(mask.device)
-        if is_torch_edge:
-            edge_index = torch.from_numpy(edge_index_np).to(edge_index.device)
-            expanded_edge_weights = torch.from_numpy(expanded_edge_weights).to(edge_index.device)
-        return features, labels, mask, edge_index, expanded_edge_weights
-        
-    sampling_strategy = {minority_class: target_minority_count}
-    
-    smote = SMOTE(
-        sampling_strategy=sampling_strategy,
-        k_neighbors=max(1, min(int(k_neighbors), minority_count - 1)),
-        random_state=random_state
-    )
-    X_smote, y_smote = smote.fit_resample(features_masked, labels_masked)
-    
-    n_original = features_masked.shape[0]
-    n_synthetic = X_smote.shape[0] - n_original
-    
-    if n_synthetic <= 0:
-        expanded_features = features_np
-        expanded_labels = labels_np
-        expanded_mask = mask_np
-        expanded_edge_index = edge_index_np
-        expanded_edge_weights = np.ones(max(edge_index_np.shape[1], 0), dtype=float) if edge_index_np.size else np.array([], dtype=float)
-    else:
-        clean_features_np = np.nan_to_num(features_np, nan=0.0, posinf=0.0, neginf=0.0)
-        expanded_features = np.vstack([clean_features_np, X_smote[n_original:]])
-        expanded_labels = np.concatenate([labels_np, y_smote[n_original:]])
-        expanded_mask = np.zeros(len(expanded_labels), dtype=bool)
-        expanded_mask[:len(mask_np)] = mask_np
-        expanded_mask[len(labels_np):] = True
-        
-        base_weights = np.ones(max(edge_index_np.shape[1], 0), dtype=float) if edge_index_np.size else np.array([], dtype=float)
-        expanded_edge_index = edge_index_np
-        expanded_edge_weights = base_weights
-        
+        # Candidate pool for the synthetic node's graph neighbor is restricted to
+        # train-mask nodes only (features_masked / idx_mask), not the full,
+        # unmasked node set -- fitting on features_np here would let synthetic
+        # train nodes attach directly to val/test nodes based on val/test's own
+        # feature values, leaking test-set structure into the training graph.
         nbrs = NearestNeighbors(n_neighbors=min(k_neighbors + 1, features_masked.shape[0]), algorithm='ball_tree').fit(features_masked)
         new_edges = []
-        new_weights = []
         for synthetic_idx in range(n_synthetic):
             synthetic_feature = X_smote[n_original + synthetic_idx].reshape(1, -1)
-            distances, indices = nbrs.kneighbors(synthetic_feature)
-            for neighbor_idx in indices[0][1:]:
-                neighbor_global_idx = int(idx_mask[neighbor_idx])
-                synthetic_global_idx = int(features_np.shape[0] + synthetic_idx)
-                new_edges.append([neighbor_global_idx, synthetic_global_idx])
-                new_edges.append([synthetic_global_idx, neighbor_global_idx])
-                if np.isfinite(distances[0][1:]).all() and distances[0][1:] is not None:
-                    weight = float(np.exp(-np.mean(distances[0][1:]) / max(float(np.mean(distances[0][1:])), 1e-8)))
-                else:
-                    weight = 1.0
-                new_weights.extend([min(1.0, max(0.0, weight)), min(1.0, max(0.0, weight))])
-        if new_edges:
-            new_edges_array = np.array(new_edges).T
-            expanded_edge_index = np.hstack([edge_index_np, new_edges_array]) if edge_index_np.size else new_edges_array
-            expanded_edge_weights = np.concatenate([expanded_edge_weights, np.array(new_weights, dtype=float)])
-            
-    if is_torch_feat:
-        expanded_features = torch.from_numpy(expanded_features).to(features.dtype).to(features.device)
-    if is_torch_labels:
-        expanded_labels = torch.from_numpy(expanded_labels).to(labels.device)
-    if is_torch_mask:
-        expanded_mask = torch.from_numpy(expanded_mask).to(mask.device)
-    if is_torch_edge:
-        expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
-        expanded_edge_weights = torch.from_numpy(expanded_edge_weights).to(edge_index.device)
-        
-    return expanded_features, expanded_labels, expanded_mask, expanded_edge_index, expanded_edge_weights
-
-def unweighted_graph_smote_mask(mask, features, labels, edge_index, k_neighbors=5, ratio=None, random_state=None):
-    # Formerly named graph_ensemble_smote_mask. Renamed because it never implemented
-    # GraphENS (Park et al., ICLR 2022) -- it's SMOTE feature interpolation plus
-    # unconditional bidirectional k-NN edge attachment, mechanically identical to
-    # graph_smote_mask (this file) except for wider nan_to_num clip bounds and a
-    # different k_neighbors clamp base. It differs from reweighted_graph_smote_mask
-    # (above) only in that it does not produce edge weights -- hence "unweighted".
-    # The real GraphENS lives in src/methods/graphens.py + GNN_features_graphens_with_predictions.
-    is_torch_feat = isinstance(features, torch.Tensor)
-    is_torch_labels = isinstance(labels, torch.Tensor)
-    is_torch_mask = isinstance(mask, torch.Tensor)
-    is_torch_edge = isinstance(edge_index, torch.Tensor)
-    
-    if is_torch_feat:
-        features_np = features.cpu().numpy()
-    else:
-        features_np = np.array(features)
-    if is_torch_labels:
-        labels_np = labels.cpu().numpy()
-    else:
-        labels_np = np.array(labels)
-    if is_torch_mask:
-        mask_np = mask.cpu().numpy().astype(bool)
-    else:
-        mask_np = np.array(mask).astype(bool)
-    if is_torch_edge:
-        edge_index_np = edge_index.cpu().numpy()
-    else:
-        edge_index_np = np.array(edge_index)
-        
-    mask_np = np.atleast_1d(mask_np).astype(bool)
-    idx_mask = np.where(mask_np)[0]
-    if idx_mask.size == 0:
-        return features, labels, mask, edge_index
-        
-    features_masked = features_np[idx_mask]
-    features_masked = np.nan_to_num(features_masked, nan=0.0, posinf=1e5, neginf=-1e5)
-    labels_masked = labels_np[idx_mask]
-    
-    unique_classes, class_counts = np.unique(labels_masked, return_counts=True)
-    if unique_classes.size < 2:
-        return features, labels, mask, edge_index
-        
-    minority_class = unique_classes[np.argmin(class_counts)]
-    majority_class = unique_classes[np.argmax(class_counts)]
-    minority_count = np.min(class_counts)
-    majority_count = np.max(class_counts)
-    
-    if ratio is not None:
-        target_minority_count = int(np.round(majority_count / ratio))
-    else:
-        target_minority_count = majority_count
-        
-    if target_minority_count <= minority_count:
-        return features, labels, mask, edge_index
-        
-    sampling_strategy = {minority_class: target_minority_count}
-    
-    smote = SMOTE(
-        sampling_strategy=sampling_strategy,
-        k_neighbors=max(1, min(int(k_neighbors), features_masked.shape[0] - 1)),
-        random_state=random_state
-    )
-    X_smote, y_smote = smote.fit_resample(features_masked, labels_masked)
-    X_smote = np.nan_to_num(X_smote, nan=0.0, posinf=1e5, neginf=-1e5)
-    
-    n_original = features_masked.shape[0]
-    n_synthetic = X_smote.shape[0] - n_original
-    
-    if n_synthetic <= 0:
-        expanded_features = features_np
-        expanded_labels = labels_np
-        expanded_mask = mask_np
-        expanded_edge_index = edge_index_np
-    else:
-        clean_features_np = np.nan_to_num(features_np, nan=0.0, posinf=1e5, neginf=-1e5)
-        expanded_features = np.vstack([clean_features_np, X_smote[n_original:]])
-        expanded_labels = np.concatenate([labels_np, y_smote[n_original:]])
-        expanded_mask = np.zeros(len(expanded_labels), dtype=bool)
-        expanded_mask[:len(mask_np)] = mask_np
-        expanded_mask[len(labels_np):] = True
-        
-        degree = np.zeros(clean_features_np.shape[0])
-        if edge_index_np.shape[1] > 0:
-            for edge_pair in edge_index_np.T:
-                if 0 <= edge_pair[0] < len(degree):
-                    degree[edge_pair[0]] += 1
-                if 0 <= edge_pair[1] < len(degree):
-                    degree[edge_pair[1]] += 1
-                    
-        nbrs = NearestNeighbors(n_neighbors=min(k_neighbors + 1, clean_features_np.shape[0]), algorithm='ball_tree').fit(clean_features_np)
-        new_edges = []
-        for synthetic_idx in range(n_synthetic):
-            synthetic_feature = np.nan_to_num(X_smote[n_original + synthetic_idx].reshape(1, -1), nan=0.0, posinf=1e5, neginf=-1e5)
             _, indices = nbrs.kneighbors(synthetic_feature)
             for neighbor_idx in indices[0][1:]:
-                new_edges.append([neighbor_idx, int(clean_features_np.shape[0] + synthetic_idx)])
-                new_edges.append([int(clean_features_np.shape[0] + synthetic_idx), neighbor_idx])
+                neighbor_global_idx = int(idx_mask[neighbor_idx])
+                new_edges.append([neighbor_global_idx, int(features_np.shape[0] + synthetic_idx)])
+                new_edges.append([int(features_np.shape[0] + synthetic_idx), neighbor_global_idx])
         if new_edges:
             new_edges_array = np.array(new_edges).T
             expanded_edge_index = np.hstack([edge_index_np, new_edges_array]) if edge_index_np.size else new_edges_array
         else:
             expanded_edge_index = edge_index_np
-            
+
     if is_torch_feat:
         expanded_features = torch.from_numpy(expanded_features).to(features.dtype).to(features.device)
     if is_torch_labels:
@@ -548,5 +296,6 @@ def unweighted_graph_smote_mask(mask, features, labels, edge_index, k_neighbors=
         expanded_mask = torch.from_numpy(expanded_mask).to(mask.device)
     if is_torch_edge:
         expanded_edge_index = torch.from_numpy(expanded_edge_index).to(edge_index.device)
-        
+
     return expanded_features, expanded_labels, expanded_mask, expanded_edge_index
+

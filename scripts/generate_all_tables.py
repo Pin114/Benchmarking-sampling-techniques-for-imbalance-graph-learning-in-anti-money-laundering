@@ -21,7 +21,6 @@ SAMPLING_TECHNIQUES = {
     'SMOTE': 'SMOTE',
     'GRAPH_SMOTE': 'GRAPH_SMOTE',
     'GRAPH_ENSEMBLE_SMOTE': 'GRAPH_ENSEMBLE_SMOTE',
-    'REWEIGHTED_GRAPH_SMOTE': 'REWEIGHTED_GRAPH_SMOTE'
 }
 
 RATIOS = ['original', 'ratio_1to100', 'ratio_1to10', 'ratio_1to2', 'ratio_1to1']
@@ -39,10 +38,10 @@ METHOD_SAMPLING_MAP = {
     'POSITIONAL': ['NONE', 'RUS', 'SMOTE'],
     'DEEPWALK': ['NONE', 'RUS', 'SMOTE'],
     'NODE2VEC': ['NONE', 'RUS', 'SMOTE'],
-    'GCN': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
-    'SAGE': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
-    'GAT': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
-    'GIN': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'REWEIGHTED_GRAPH_SMOTE'],
+    'GCN': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE'],
+    'SAGE': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE'],
+    'GAT': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE'],
+    'GIN': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE'],
 }
 
 def infer_metadata(path: Path):
@@ -69,7 +68,7 @@ def infer_metadata(path: Path):
             break
             
     sampling = 'NONE'
-    for s in ['reweighted_graph_smote', 'graph_ensemble_smote', 'graph_smote', 'smote', 'rus']:
+    for s in ['graph_ensemble_smote', 'graph_smote', 'smote', 'rus']:
         if s in stem:
             sampling = s.upper()
             break

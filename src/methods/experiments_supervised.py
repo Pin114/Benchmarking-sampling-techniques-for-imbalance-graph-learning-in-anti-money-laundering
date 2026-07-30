@@ -11,13 +11,11 @@ from src.methods.utils.decoder import *
 from src.methods.evaluation import (
     smote_mask,
     graph_smote_mask,
-    reweighted_graph_smote_mask,
-    unweighted_graph_smote_mask,
     EarlyStopping,
     random_undersample_mask
 )
 from src.methods.losses import FocalLoss
-from src.methods.samplers import GATSMOTE, TargetedNeighbourhoodUndersampling
+from src.methods.samplers import GATEdgeGenerator, TargetedNeighbourhoodUndersampling
 from src.methods import graphens
 from sklearn.metrics import average_precision_score, f1_score
 import os
@@ -37,9 +35,6 @@ def _normalize_sampling_name(sampling):
         "targeted_neighbourhood_undersampling": "targeted_neighbourhood_undersampling",
         "graphens": "graphens",
         "graph_ensemble_smote": "graphens",
-        "unweighted_graph_smote": "unweighted_graph_smote",
-        "reweighted_graphsmote": "reweighted_graph_smote",
-        "reweighted_graph_smote": "reweighted_graph_smote",
     }
     return mapping.get(sampling, sampling)
 
@@ -459,7 +454,7 @@ def positional_features_with_predictions(
 # 3. Node2Vec (No Graph Modifications Needed - Symmetrically Padded and Corrected)
 # =====================================================================
 def node2vec_features(
-    ntw_torch, train_mask, val_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, percentile_q=99, ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None
+    ntw_torch, train_mask, val_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, percentile_q=99, ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, patience=10, checkpoint_path="res/checkpoints/best_model_node2vec.pt"
 ):
     if use_torch:
         active_nodes = (train_mask.bool() | test_mask.bool())
@@ -509,7 +504,7 @@ def node2vec_features(
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio, random_state=seed)
     elif sampling_name == "smote" and ratio is not None:
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio, random_state=seed)
-    elif sampling_name in ["graph_smote", "graphens", "unweighted_graph_smote", "reweighted_graph_smote"] and ratio is not None:
+    elif sampling_name in ["graph_smote", "graphens"] and ratio is not None:
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio, random_state=seed)
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
@@ -524,13 +519,18 @@ def node2vec_features(
     )
 
     x_train = x[train_mask_sampled].to(device_decoder).squeeze()
+    x_val = x[:val_mask.shape[0]][val_mask.bool()].to(device_decoder).squeeze()
     x_test = x[:test_mask.shape[0]][test_mask.bool()].to(device_decoder).squeeze()
     y_train = y_tensor[train_mask_sampled].to(device_decoder).squeeze()
+    y_val = ntw_torch.y[:val_mask.shape[0]][val_mask.bool()].to(device_decoder).squeeze()
     y_test = ntw_torch.y[:test_mask.shape[0]][test_mask.bool()].to(device_decoder).squeeze()
 
     decoder = Decoder_deep_norm(x_train.shape[1], 2, 10).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
     criterion = _build_loss_criterion(y_train, loss_name=loss, loss_kwargs=loss_kwargs or {}, device=device_decoder)
+    early_stopping = EarlyStopping(
+        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor='val_ap'
+    )
 
     for epoch in range(n_epochs_decoder):
         decoder.train()
@@ -539,6 +539,18 @@ def node2vec_features(
         loss_val = _compute_loss(criterion, output, y_train)
         loss_val.backward()
         optimizer.step()
+
+        decoder.eval()
+        with torch.no_grad():
+            val_output = decoder(x_val)
+            val_output_softmax = val_output.softmax(dim=1)
+            val_ap = average_precision_score(y_val.cpu().numpy(), val_output_softmax.cpu().numpy()[:, 1])
+            early_stopping(val_ap, decoder)
+        if early_stopping.early_stop:
+            break
+
+    if os.path.exists(checkpoint_path):
+        decoder.load_state_dict(torch.load(checkpoint_path, map_location=device_decoder))
 
     decoder.eval()
     y_pred = decoder(x_test)
@@ -550,7 +562,7 @@ def node2vec_features(
     return (ap_score, f1)
 
 def node2vec_features_with_predictions(
-    ntw_torch, train_mask, val_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None
+    ntw_torch, train_mask, val_mask, test_mask, embedding_dim, walk_length, context_size, walks_per_node, num_negative_samples, p, q, lr=0.01, n_epochs=1, n_epochs_decoder=1, ntw_nx=None, use_torch=False, use_intrinsic=True, ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, patience=10, checkpoint_path="res/checkpoints/best_model_node2vec_tuned.pt"
 ):
     if use_torch:
         active_nodes = (train_mask.bool() | test_mask.bool())
@@ -600,7 +612,7 @@ def node2vec_features_with_predictions(
         train_mask_sampled = random_undersample_mask(train_mask.bool(), y_tensor, ratio=ratio, random_state=seed)
     elif sampling_name == "smote" and ratio is not None:
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio, random_state=seed)
-    elif sampling_name in ["graph_smote", "graphens", "unweighted_graph_smote", "reweighted_graph_smote"] and ratio is not None:
+    elif sampling_name in ["graph_smote", "graphens"] and ratio is not None:
         x, y_tensor, train_mask_sampled = smote_mask(train_mask.bool(), x, y_tensor, ratio=ratio, random_state=seed)
     elif sampling_name == "targeted_neighbourhood_undersampling" and ratio is not None:
         sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=seed)
@@ -615,13 +627,18 @@ def node2vec_features_with_predictions(
     )
 
     x_train = x[train_mask_sampled.cpu()].to(device_decoder).squeeze()
+    x_val = x[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder).squeeze()
     x_test = x[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
     y_train = y_tensor[train_mask_sampled.cpu()].to(device_decoder).squeeze()
+    y_val = ntw_torch.y[:val_mask.shape[0]][val_mask.bool().cpu()].to(device_decoder).squeeze()
     y_test = ntw_torch.y[:test_mask.shape[0]][test_mask.bool().cpu()].to(device_decoder).squeeze()
 
     decoder = Decoder_deep_norm(x_train.shape[1], 2, 10).to(device_decoder)
     optimizer = torch.optim.Adam(decoder.parameters(), lr=lr)
     criterion = _build_loss_criterion(y_train, loss_name=loss, loss_kwargs=loss_kwargs or {}, device=device_decoder)
+    early_stopping = EarlyStopping(
+        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor='val_ap'
+    )
 
     for epoch in range(n_epochs_decoder):
         decoder.train()
@@ -630,6 +647,18 @@ def node2vec_features_with_predictions(
         loss_val = _compute_loss(criterion, output, y_train)
         loss_val.backward()
         optimizer.step()
+
+        decoder.eval()
+        with torch.no_grad():
+            val_output = decoder(x_val)
+            val_output_softmax = val_output.softmax(dim=1)
+            val_ap = average_precision_score(y_val.cpu().numpy(), val_output_softmax.cpu().numpy()[:, 1])
+            early_stopping(val_ap, decoder)
+        if early_stopping.early_stop:
+            break
+
+    if os.path.exists(checkpoint_path):
+        decoder.load_state_dict(torch.load(checkpoint_path, map_location=device_decoder))
 
     decoder.eval()
     y_pred = decoder(x_test)
@@ -641,7 +670,7 @@ def node2vec_features_with_predictions(
 # 4. Standard GNN Methods (Validation, Slicing Protected)
 # =====================================================================
 def GNN_features(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, clip_norm=1.0
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -692,9 +721,9 @@ def GNN_features(
         train_dev = train_mask_sampled
         y_train = y[train_dev]
         criterion = _build_weighted_criterion(y_train)
-        loss_val = _compute_loss(criterion, out[train_dev], y_train, mask=train_dev)
+        loss_val = _compute_loss(criterion, out[train_dev], y_train)
         loss_val.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
         optimizer.step()
         return loss_val.item()
 
@@ -709,7 +738,7 @@ def GNN_features(
             if out_filtered.shape[0] == 0:
                 return None
             criterion = _build_weighted_criterion(y_filtered)
-            loss_val = _compute_loss(criterion, out_filtered, y_filtered, mask=mask_dev).item()
+            loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
@@ -736,7 +765,7 @@ def GNN_features(
     return test_result['ap'], test_result['f1']
 
 def GNN_features_with_predictions(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, clip_norm=1.0
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -787,9 +816,9 @@ def GNN_features_with_predictions(
         train_dev = train_mask_sampled
         y_train = y[train_dev]
         criterion = _build_weighted_criterion(y_train)
-        loss_val = _compute_loss(criterion, out[train_dev], y_train, mask=train_dev)
+        loss_val = _compute_loss(criterion, out[train_dev], y_train)
         loss_val.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
         optimizer.step()
         return loss_val.item()
 
@@ -804,7 +833,7 @@ def GNN_features_with_predictions(
             if out_filtered.shape[0] == 0:
                 return None
             criterion = _build_weighted_criterion(y_filtered)
-            loss_val = _compute_loss(criterion, out_filtered, y_filtered, mask=mask_dev).item()
+            loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
@@ -830,22 +859,68 @@ def GNN_features_with_predictions(
 # =====================================================================
 # 5. GNN GraphSMOTE (Train-Evaluation Graph Match)
 # =====================================================================
+def _build_graphsmote_sampling(
+    sampling_name, train_mask, ntw_torch, k_neighbors, ratio, random_state,
+    gatsmote_k_neighbors, gatsmote_heads, gatsmote_edge_threshold, gatsmote_lambda1, gatsmote_lambda2,
+    gatsmote_use_predicted_labels_for_homophily,
+    tnu_k_neighbors, tnu_distance_metric, tnu_remove_ratio, tnu_noise_threshold,
+    tnu_min_majority_keep, tnu_preserve_minority_neighbors,
+    device,
+):
+    """Shared sampling dispatch for GNN_features_graphsmote(_with_predictions). Returns
+    (x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs,
+    pair_label_match) -- the last three are non-None only for sampling_name == 'gatsmote',
+    since that is the only technique whose topology is recomputed every training step.
+    """
+    gat_edge_gen = None
+    synthetic_pairs = None
+    pair_label_match = None
+
+    if sampling_name == "gatsmote":
+        gat_edge_gen = GATEdgeGenerator(
+            in_dim=ntw_torch.x.shape[1], k_neighbors=gatsmote_k_neighbors, attention_heads=gatsmote_heads,
+            edge_threshold=gatsmote_edge_threshold, lambda_locality=gatsmote_lambda1, lambda_shortest=gatsmote_lambda2,
+            ratio=ratio, use_predicted_labels_for_homophily=gatsmote_use_predicted_labels_for_homophily,
+            random_state=random_state,
+        ).to(device)
+        prepared = gat_edge_gen.prepare_synthetic_nodes(train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index)
+        x_smote, y_smote, train_mask_smote, edge_index_smote = (
+            prepared['features'], prepared['labels'], prepared['mask'], prepared['edge_index']
+        )
+        synthetic_pairs = prepared['synthetic_pairs'].to(device)
+        pair_label_match = prepared['pair_label_match'].to(device)
+    elif sampling_name == "targeted_neighbourhood_undersampling":
+        # --tnu-remove-ratio overrides the outer imbalance-ratio sweep only when explicitly
+        # set; its default (None) preserves the existing behavior of following `ratio` so the
+        # sweep grid still drives TNU by default.
+        effective_remove_ratio = tnu_remove_ratio if tnu_remove_ratio is not None else ratio
+        sampler = TargetedNeighbourhoodUndersampling(
+            k_neighbors=tnu_k_neighbors, distance_metric=tnu_distance_metric, remove_ratio=effective_remove_ratio,
+            preserve_minority_neighbors=tnu_preserve_minority_neighbors, noise_threshold=tnu_noise_threshold,
+            min_majority_keep=tnu_min_majority_keep, random_state=random_state,
+        )
+        train_mask_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y)
+        x_smote, y_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, ntw_torch.edge_index
+    elif sampling_name == "graph_smote":
+        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
+            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
+        )
+    else:
+        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
+
+    return x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match
+
+
 def GNN_features_graphsmote(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, gatsmote_k_neighbors=5, gatsmote_attention_heads=1, gatsmote_edge_threshold=0.5, gatsmote_homophily_weight=1.0, gatsmote_use_predicted_labels_for_homophily=False
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, clip_norm=1.0,
+    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=1.0, gatsmote_lambda2=1.0, gatsmote_use_predicted_labels_for_homophily=False,
+    tnu_k_neighbors=10, tnu_distance_metric='cosine', tnu_remove_ratio=None, tnu_noise_threshold=0.5, tnu_min_majority_keep=1, tnu_preserve_minority_neighbors=True,
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
-    early_stopping = EarlyStopping(
-        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
-    )
 
     def _build_weighted_criterion(y_subset):
         return _build_loss_criterion(y_subset, loss_name=loss, loss_kwargs=loss_kwargs or {}, device=device)
-
-    def _mask_to_device(mask):
-        if mask is None:
-            return None
-        return mask.bool().to(device)
 
     def _forward(x, edge_index, edge_attr=None):
         if use_intrinsic:
@@ -854,38 +929,28 @@ def GNN_features_graphsmote(
         return model(ones, edge_index, edge_attr=edge_attr)
 
     sampling_name = _normalize_sampling_name(sampling)
-    if sampling_name == "reweighted_graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
+    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match = (
+        _build_graphsmote_sampling(
+            sampling_name, train_mask, ntw_torch, k_neighbors, ratio, random_state,
+            gatsmote_k_neighbors, gatsmote_heads, gatsmote_edge_threshold, gatsmote_lambda1, gatsmote_lambda2,
+            gatsmote_use_predicted_labels_for_homophily,
+            tnu_k_neighbors, tnu_distance_metric, tnu_remove_ratio, tnu_noise_threshold,
+            tnu_min_majority_keep, tnu_preserve_minority_neighbors,
+            device,
         )
-    elif sampling_name == "unweighted_graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = unweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
-        )
-        edge_attr_smote = None
-    elif sampling_name == "gatsmote":
-        sampler = GATSMOTE(k_neighbors=gatsmote_k_neighbors, attention_heads=gatsmote_attention_heads, edge_threshold=gatsmote_edge_threshold, homophily_weight=gatsmote_homophily_weight, ratio=ratio, use_predicted_labels_for_homophily=gatsmote_use_predicted_labels_for_homophily, random_state=random_state)
-        x_smote, y_smote, train_mask_smote, edge_index_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index)
-        edge_attr_smote = None
-    elif sampling_name == "targeted_neighbourhood_undersampling":
-        sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=random_state)
-        train_mask_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y)
-        x_smote, y_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, ntw_torch.edge_index
-        edge_attr_smote = None
-    elif sampling_name == "graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
-        )
-        edge_attr_smote = None
-    else:
-        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
+    )
+    # Checkpointing/restoring must cover the edge generator too when it exists, otherwise
+    # early-stopping would restore the best classifier weights alongside a GATEdgeGenerator
+    # left at whatever state training happened to end on -- a state the classifier never saw.
+    checkpoint_target = nn.ModuleList([model, gat_edge_gen]) if gat_edge_gen is not None else model
+    early_stopping = EarlyStopping(
+        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
+    )
 
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
     ntw_torch_smote.y = y_smote.long().to(device)
     ntw_torch_smote.edge_index = edge_index_smote.long().to(device)
-    if edge_attr_smote is not None:
-        ntw_torch_smote.edge_attr = edge_attr_smote.to(device=device, dtype=torch.float32)
     train_mask_smote = train_mask_smote.bool().to(device)
 
     # Create padded masks for expanded graph size validation/test symmetry
@@ -896,31 +961,48 @@ def GNN_features_graphsmote(
         val_mask_smote = None
     test_mask_smote = torch.cat([test_mask.bool().cpu(), torch.zeros(n_synthetic, dtype=torch.bool)]).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
+    if gat_edge_gen is not None:
+        joint_params = list(model.parameters()) + list(gat_edge_gen.parameters())
+    else:
+        joint_params = list(model.parameters())
+    optimizer = torch.optim.Adam(joint_params, lr=lr, weight_decay=5e-4)
+
+    def _current_graph():
+        if gat_edge_gen is None:
+            return ntw_torch_smote.edge_index, None, None, None
+        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match)
 
     def train_epoch():
         model.train()
+        if gat_edge_gen is not None:
+            gat_edge_gen.train()
         optimizer.zero_grad()
-        edge_attr_for_epoch = ntw_torch_smote.edge_attr if hasattr(ntw_torch_smote, 'edge_attr') and ntw_torch_smote.edge_attr is not None else None
-        out, _ = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, edge_attr=edge_attr_for_epoch)
+        edge_index_epoch, edge_attr_epoch, loss_locality, loss_shortest = _current_graph()
+        out, _ = _forward(ntw_torch_smote.x, edge_index_epoch, edge_attr=edge_attr_epoch)
         y = ntw_torch_smote.y
         active_mask = train_mask_smote
         if active_mask.any():
             y_hat_filtered = out[active_mask]
             y_filtered = y[active_mask]
             criterion = _build_weighted_criterion(y_filtered)
-            loss_val = _compute_loss(criterion, y_hat_filtered, y_filtered, mask=active_mask)
+            loss_node = _compute_loss(criterion, y_hat_filtered, y_filtered)
+            if gat_edge_gen is not None:
+                loss_val = loss_node + gat_edge_gen.lambda_locality * loss_locality + gat_edge_gen.lambda_shortest * loss_shortest
+            else:
+                loss_val = loss_node
             loss_val.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(joint_params, max_norm=clip_norm)
             optimizer.step()
             return loss_val.item()
         return 0.0
 
     def evaluate_split(mask_smote):
         model.eval()
+        if gat_edge_gen is not None:
+            gat_edge_gen.eval()
         with torch.no_grad():
-            edge_attr_for_eval = ntw_torch_smote.edge_attr if hasattr(ntw_torch_smote, 'edge_attr') and ntw_torch_smote.edge_attr is not None else None
-            out, _ = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, edge_attr=edge_attr_for_eval)
+            edge_index_epoch, edge_attr_epoch, _, _ = _current_graph()
+            out, _ = _forward(ntw_torch_smote.x, edge_index_epoch, edge_attr=edge_attr_epoch)
             y = ntw_torch_smote.y
             mask_dev = mask_smote.bool().to(device)
             out_filtered = out[mask_dev]
@@ -928,7 +1010,7 @@ def GNN_features_graphsmote(
             if out_filtered.shape[0] == 0:
                 return None
             criterion = _build_weighted_criterion(y_filtered)
-            loss_val = _compute_loss(criterion, out_filtered, y_filtered, mask=mask_dev).item()
+            loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
@@ -944,32 +1026,26 @@ def GNN_features_graphsmote(
             if val_result is not None:
                 print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_loss={val_result['loss']:.6f} | val_ap={val_result['ap']:.6f}")
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
-                early_stopping(metric_to_monitor, model)
+                early_stopping(metric_to_monitor, checkpoint_target)
         if early_stopping.early_stop:
             print(f"[{sampling}] Early Stop triggered!")
             break
 
     if val_mask_smote is not None and os.path.exists(checkpoint_path):
-        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+        checkpoint_target.load_state_dict(torch.load(checkpoint_path, map_location=device))
     test_result = evaluate_split(test_mask_smote)
     return test_result['ap'], test_result['f1']
 
 def GNN_features_graphsmote_with_predictions(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, gatsmote_k_neighbors=5, gatsmote_attention_heads=1, gatsmote_edge_threshold=0.5, gatsmote_homophily_weight=1.0, gatsmote_use_predicted_labels_for_homophily=False
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, clip_norm=1.0,
+    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=1.0, gatsmote_lambda2=1.0, gatsmote_use_predicted_labels_for_homophily=False,
+    tnu_k_neighbors=10, tnu_distance_metric='cosine', tnu_remove_ratio=None, tnu_noise_threshold=0.5, tnu_min_majority_keep=1, tnu_preserve_minority_neighbors=True,
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
-    early_stopping = EarlyStopping(
-        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
-    )
 
     def _build_weighted_criterion(y_subset):
         return _build_loss_criterion(y_subset, loss_name=loss, loss_kwargs=loss_kwargs or {}, device=device)
-
-    def _mask_to_device(mask):
-        if mask is None:
-            return None
-        return mask.bool().to(device)
 
     def _forward(x, edge_index, edge_attr=None):
         if use_intrinsic:
@@ -978,38 +1054,25 @@ def GNN_features_graphsmote_with_predictions(
         return model(ones, edge_index, edge_attr=edge_attr)
 
     sampling_name = _normalize_sampling_name(sampling)
-    if sampling_name == "reweighted_graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
+    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match = (
+        _build_graphsmote_sampling(
+            sampling_name, train_mask, ntw_torch, k_neighbors, ratio, random_state,
+            gatsmote_k_neighbors, gatsmote_heads, gatsmote_edge_threshold, gatsmote_lambda1, gatsmote_lambda2,
+            gatsmote_use_predicted_labels_for_homophily,
+            tnu_k_neighbors, tnu_distance_metric, tnu_remove_ratio, tnu_noise_threshold,
+            tnu_min_majority_keep, tnu_preserve_minority_neighbors,
+            device,
         )
-    elif sampling_name == "unweighted_graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = unweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
-        )
-        edge_attr_smote = None
-    elif sampling_name == "gatsmote":
-        sampler = GATSMOTE(k_neighbors=gatsmote_k_neighbors, attention_heads=gatsmote_attention_heads, edge_threshold=gatsmote_edge_threshold, homophily_weight=gatsmote_homophily_weight, ratio=ratio, use_predicted_labels_for_homophily=gatsmote_use_predicted_labels_for_homophily, random_state=random_state)
-        x_smote, y_smote, train_mask_smote, edge_index_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index)
-        edge_attr_smote = None
-    elif sampling_name == "targeted_neighbourhood_undersampling":
-        sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=random_state)
-        train_mask_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y)
-        x_smote, y_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, ntw_torch.edge_index
-        edge_attr_smote = None
-    elif sampling_name == "graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
-        )
-        edge_attr_smote = None
-    else:
-        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
+    )
+    checkpoint_target = nn.ModuleList([model, gat_edge_gen]) if gat_edge_gen is not None else model
+    early_stopping = EarlyStopping(
+        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
+    )
 
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
     ntw_torch_smote.y = y_smote.long().to(device)
     ntw_torch_smote.edge_index = edge_index_smote.long().to(device)
-    if edge_attr_smote is not None:
-        ntw_torch_smote.edge_attr = edge_attr_smote.to(device=device, dtype=torch.float32)
     train_mask_smote = train_mask_smote.bool().to(device)
 
     # Create padded masks for expanded graph size validation/test symmetry
@@ -1020,31 +1083,48 @@ def GNN_features_graphsmote_with_predictions(
         val_mask_smote = None
     test_mask_smote = torch.cat([test_mask.bool().cpu(), torch.zeros(n_synthetic, dtype=torch.bool)]).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
+    if gat_edge_gen is not None:
+        joint_params = list(model.parameters()) + list(gat_edge_gen.parameters())
+    else:
+        joint_params = list(model.parameters())
+    optimizer = torch.optim.Adam(joint_params, lr=lr, weight_decay=5e-4)
+
+    def _current_graph():
+        if gat_edge_gen is None:
+            return ntw_torch_smote.edge_index, None, None, None
+        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match)
 
     def train_epoch():
         model.train()
+        if gat_edge_gen is not None:
+            gat_edge_gen.train()
         optimizer.zero_grad()
-        edge_attr_for_epoch = ntw_torch_smote.edge_attr if hasattr(ntw_torch_smote, 'edge_attr') and ntw_torch_smote.edge_attr is not None else None
-        out, _ = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, edge_attr=edge_attr_for_epoch)
+        edge_index_epoch, edge_attr_epoch, loss_locality, loss_shortest = _current_graph()
+        out, _ = _forward(ntw_torch_smote.x, edge_index_epoch, edge_attr=edge_attr_epoch)
         y = ntw_torch_smote.y
         active_mask = train_mask_smote
         if active_mask.any():
             y_hat_filtered = out[active_mask]
             y_filtered = y[active_mask]
             criterion = _build_weighted_criterion(y_filtered)
-            loss_val = _compute_loss(criterion, y_hat_filtered, y_filtered, mask=active_mask)
+            loss_node = _compute_loss(criterion, y_hat_filtered, y_filtered)
+            if gat_edge_gen is not None:
+                loss_val = loss_node + gat_edge_gen.lambda_locality * loss_locality + gat_edge_gen.lambda_shortest * loss_shortest
+            else:
+                loss_val = loss_node
             loss_val.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(joint_params, max_norm=clip_norm)
             optimizer.step()
             return loss_val.item()
         return 0.0
 
     def evaluate_split(mask_smote):
         model.eval()
+        if gat_edge_gen is not None:
+            gat_edge_gen.eval()
         with torch.no_grad():
-            edge_attr_for_eval = ntw_torch_smote.edge_attr if hasattr(ntw_torch_smote, 'edge_attr') and ntw_torch_smote.edge_attr is not None else None
-            out, _ = _forward(ntw_torch_smote.x, ntw_torch_smote.edge_index, edge_attr=edge_attr_for_eval)
+            edge_index_epoch, edge_attr_epoch, _, _ = _current_graph()
+            out, _ = _forward(ntw_torch_smote.x, edge_index_epoch, edge_attr=edge_attr_epoch)
             y = ntw_torch_smote.y
             mask_dev = mask_smote.bool().to(device)
             out_filtered = out[mask_dev]
@@ -1052,7 +1132,7 @@ def GNN_features_graphsmote_with_predictions(
             if out_filtered.shape[0] == 0:
                 return None
             criterion = _build_weighted_criterion(y_filtered)
-            loss_val = _compute_loss(criterion, out_filtered, y_filtered, mask=mask_dev).item()
+            loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
@@ -1065,13 +1145,13 @@ def GNN_features_graphsmote_with_predictions(
             if val_result is not None:
                 print(f"Epoch {epoch+1:03d}/{n_epochs:03d} | train_loss={train_loss:.6f} | val_loss={val_result['loss']:.6f} | val_ap={val_result['ap']:.6f}")
                 metric_to_monitor = val_result['ap'] if monitor == 'val_ap' else val_result['loss']
-                early_stopping(metric_to_monitor, model)
+                early_stopping(metric_to_monitor, checkpoint_target)
         if early_stopping.early_stop:
             print(f"[{sampling}] Early Stop triggered!")
             break
 
     if val_mask_smote is not None and os.path.exists(checkpoint_path):
-        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+        checkpoint_target.load_state_dict(torch.load(checkpoint_path, map_location=device))
     test_result = evaluate_split(test_mask_smote)
     return test_result['ap'], test_result['output'].cpu().numpy()[:, 1], test_result['y'].cpu().numpy()
 
@@ -1084,12 +1164,12 @@ def GNN_features_graphens_with_predictions(
     train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None,
     use_intrinsic: bool = True, random_state: int = None, patience: int = 10,
     checkpoint_path: str = "res/checkpoints/best_model_graphens.pt", monitor: str = 'val_ap',
-    ratio=None, loss="ce", loss_kwargs=None,
+    ratio=None, loss="ce", loss_kwargs=None, clip_norm=1.0,
     graphens_warmup: int = 5, graphens_mask_k: float = 5.0, graphens_pred_temp: float = 1.0,
 ):
     """GraphENS (Park, Song & Yang, ICLR 2022), Algorithm 1.
 
-    Unlike GraphSMOTE/GATSMOTE/TNU/reweighted-GraphSMOTE
+    Unlike GraphSMOTE/GATSMOTE/TNU
     (GNN_features_graphsmote_with_predictions), which sample a static
     augmented graph once before the epoch loop, GraphENS resamples and
     remixes its synthetic ego-network nodes EVERY epoch, using confidence
@@ -1248,9 +1328,9 @@ def GNN_features_graphens_with_predictions(
         out, _ = _forward(x_epoch, edge_index_epoch)
         y_train = y_epoch[train_mask_epoch]
         criterion = _build_weighted_criterion(y_train)
-        loss_val = _compute_loss(criterion, out[train_mask_epoch], y_train, mask=train_mask_epoch)
+        loss_val = _compute_loss(criterion, out[train_mask_epoch], y_train)
         loss_val.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
         optimizer.step()
 
         # Reuse this epoch's own backward pass for saliency (item 11): no
@@ -1286,7 +1366,7 @@ def GNN_features_graphens_with_predictions(
             if out_filtered.shape[0] == 0:
                 return None
             criterion = _build_weighted_criterion(y_filtered)
-            loss_val = _compute_loss(criterion, out_filtered, y_filtered, mask=mask_dev).item()
+            loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
