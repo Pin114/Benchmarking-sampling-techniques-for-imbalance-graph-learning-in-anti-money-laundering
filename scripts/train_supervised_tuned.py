@@ -60,11 +60,12 @@ if __name__ == "__main__":
     parser.add_argument('--focal-gamma', type=float, default=2.0, help='Focal loss gamma')
     parser.add_argument('--focal-alpha', default=None, help='Focal loss alpha (None, balanced, or numeric)')
 
-    # GATSMOTE params
+    # GATSMOTE params (trainable multi-head attention edge generator, Liu et al. 2022)
     parser.add_argument('--gatsmote-k-neighbors', type=int, default=5)
-    parser.add_argument('--gatsmote-attention-heads', type=int, default=1)
-    parser.add_argument('--gatsmote-edge-threshold', type=float, default=0.5)
-    parser.add_argument('--gatsmote-homophily-weight', type=float, default=1.0)
+    parser.add_argument('--gatsmote-heads', type=int, default=4, help='Number of attention heads')
+    parser.add_argument('--gatsmote-edge-threshold', type=float, default=0.5, help='E^t cutoff for including a synthetic edge in the graph topology')
+    parser.add_argument('--gatsmote-lambda1', type=float, default=1.0, help='Weight of the locality (cosine-similarity) auxiliary loss')
+    parser.add_argument('--gatsmote-lambda2', type=float, default=1.0, help='Weight of the shortest-path/homophily auxiliary loss')
     parser.add_argument('--gatsmote-use-predicted-labels', action='store_true')
 
     # TNU params
@@ -155,10 +156,10 @@ if __name__ == "__main__":
         "positional": ["none", "random_undersample", "smote"],
         "deepwalk": ["none", "random_undersample", "smote"],
         "node2vec": ["none", "random_undersample", "smote"],
-        "gcn": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote", "gatsmote", "tnu"],
-        "sage": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote", "gatsmote", "tnu"],
-        "gat": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote", "gatsmote", "tnu"],
-        "gin": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "reweighted_graph_smote", "gatsmote", "tnu"]
+        "gcn": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "gatsmote", "tnu"],
+        "sage": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "gatsmote", "tnu"],
+        "gat": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "gatsmote", "tnu"],
+        "gin": ["none", "random_undersample", "graph_smote", "graph_ensemble_smote", "gatsmote", "tnu"]
     }
 
     # construct loss kwargs for focal if requested
@@ -219,7 +220,7 @@ if __name__ == "__main__":
                         p_val = 1.0 if method == "deepwalk" else 1.5
                         q_val = 1.0
                         ap_score, y_pred_probs, y_true = node2vec_features_with_predictions(
-                            ntw_torch, train_mask_ratio, val_mask, test_mask, embedding_dim=16, walk_length=3, context_size=2, walks_per_node=1, num_negative_samples=2, p=p_val, q=q_val, lr=args.lr, n_epochs=20, n_epochs_decoder=20, use_torch=True, ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed
+                            ntw_torch, train_mask_ratio, val_mask, test_mask, embedding_dim=16, walk_length=3, context_size=2, walks_per_node=1, num_negative_samples=2, p=p_val, q=q_val, lr=args.lr, n_epochs=20, n_epochs_decoder=20, use_torch=True, ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed, patience=10, checkpoint_path=unique_checkpoint_path
                         )
                     elif method in ["gcn", "sage", "gat", "gin"]:
                         if method == "gcn":
@@ -235,15 +236,17 @@ if __name__ == "__main__":
 
                         if sampling in ["none", "random_undersample"]:
                             ap_score, y_pred_probs, y_true = GNN_features_with_predictions(
-                                ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_ratio, val_mask=val_mask, test_mask=test_mask, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed
+                                ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_ratio, val_mask=val_mask, test_mask=test_mask, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed, clip_norm=args.clip_norm
                             )
                         elif sampling == "graph_ensemble_smote":
                             ap_score, y_pred_probs, y_true = GNN_features_graphens_with_predictions(
-                                ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_ratio, val_mask=val_mask, test_mask=test_mask, random_state=args.seed, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', ratio=ratio, loss=args.loss, loss_kwargs=loss_kwargs, graphens_warmup=args.graphens_warmup, graphens_mask_k=args.graphens_mask_k, graphens_pred_temp=args.graphens_pred_temp
+                                ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_ratio, val_mask=val_mask, test_mask=test_mask, random_state=args.seed, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', ratio=ratio, loss=args.loss, loss_kwargs=loss_kwargs, clip_norm=args.clip_norm, graphens_warmup=args.graphens_warmup, graphens_mask_k=args.graphens_mask_k, graphens_pred_temp=args.graphens_pred_temp
                             )
                         else:
                             ap_score, y_pred_probs, y_true = GNN_features_graphsmote_with_predictions(
-                                ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_ratio, val_mask=val_mask, test_mask=test_mask, k_neighbors=5, random_state=args.seed, sampling=sampling, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', ratio=ratio, loss=args.loss, loss_kwargs=loss_kwargs, gatsmote_k_neighbors=args.gatsmote_k_neighbors, gatsmote_attention_heads=args.gatsmote_attention_heads, gatsmote_edge_threshold=args.gatsmote_edge_threshold, gatsmote_homophily_weight=args.gatsmote_homophily_weight, gatsmote_use_predicted_labels_for_homophily=args.gatsmote_use_predicted_labels
+                                ntw_torch, model, lr=args.lr, n_epochs=gnn_epochs, train_mask=train_mask_ratio, val_mask=val_mask, test_mask=test_mask, k_neighbors=5, random_state=args.seed, sampling=sampling, patience=10, checkpoint_path=unique_checkpoint_path, monitor='val_ap', ratio=ratio, loss=args.loss, loss_kwargs=loss_kwargs, clip_norm=args.clip_norm,
+                                gatsmote_k_neighbors=args.gatsmote_k_neighbors, gatsmote_heads=args.gatsmote_heads, gatsmote_edge_threshold=args.gatsmote_edge_threshold, gatsmote_lambda1=args.gatsmote_lambda1, gatsmote_lambda2=args.gatsmote_lambda2, gatsmote_use_predicted_labels_for_homophily=args.gatsmote_use_predicted_labels,
+                                tnu_k_neighbors=args.tnu_k_neighbors, tnu_distance_metric=args.tnu_distance_metric, tnu_remove_ratio=args.tnu_remove_ratio, tnu_noise_threshold=args.tnu_noise_threshold, tnu_min_majority_keep=args.tnu_min_majority_keep, tnu_preserve_minority_neighbors=args.tnu_preserve_minority_neighbors,
                             )
 
                     from sklearn.metrics import f1_score

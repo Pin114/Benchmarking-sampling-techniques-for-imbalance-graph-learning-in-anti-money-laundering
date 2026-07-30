@@ -111,8 +111,13 @@ class GraphSAGE(nn.Module): #Neighbourhood sampling only in training step (via D
             self.sage2 = SAGEConv(hidden_dim, embedding_dim, aggr=sage_aggr)
 
         self.out = Decoder_linear(embedding_dim, output_dim)
-        
+
     def forward(self, x, edge_index, edge_attr=None):
+        # edge_attr is accepted (for a uniform call signature across GCN/SAGE/GAT/GIN) but
+        # unused: SAGEConv's mean/pool aggregation has no edge-weight concept in the original
+        # GraphSAGE formulation (Hamilton et al. 2017), unlike GCNConv's edge_weight or
+        # GATv2Conv's edge_dim. This is an architectural property of the layer, not a bug --
+        # see GCN.forward for the one architecture here where edge weights actually apply.
         h = self.sage1(x, edge_index)
         h = F.relu(h)
         h = self.dropout(h)
@@ -123,7 +128,7 @@ class GraphSAGE(nn.Module): #Neighbourhood sampling only in training step (via D
                 h = self.dropout(h)
             h = self.sage2(h, edge_index)
         out = self.out(h)
-        
+
         return out, h
 
 
@@ -149,14 +154,17 @@ class GAT(nn.Module):
         self.n_layers = n_layers
         self.heads = heads
 
+        # edge_dim=1 makes GATv2Conv build its lin_edge projection so a scalar per-edge
+        # weight (e.g. from GATEdgeGenerator/graph_smote_mask) actually enters the
+        # attention computation instead of being silently accepted and ignored.
         if n_layers == 1:
-            self.gat1 = GATv2Conv(num_features, embedding_dim, heads=heads, concat=False)
+            self.gat1 = GATv2Conv(num_features, embedding_dim, heads=heads, concat=False, edge_dim=1)
         else:
-            self.gat1 = GATv2Conv(num_features, hidden_dim, heads=heads)
+            self.gat1 = GATv2Conv(num_features, hidden_dim, heads=heads, edge_dim=1)
             self.gat_hidden = nn.ModuleList()
             for _ in range(n_layers-2):
-                self.gat_hidden.append(GATv2Conv(heads*hidden_dim, hidden_dim, heads=heads))
-            self.gat2 = GATv2Conv(heads*hidden_dim, embedding_dim, heads=heads, concat=False)
+                self.gat_hidden.append(GATv2Conv(heads*hidden_dim, hidden_dim, heads=heads, edge_dim=1))
+            self.gat2 = GATv2Conv(heads*hidden_dim, embedding_dim, heads=heads, concat=False, edge_dim=1)
 
         self.out = Decoder_linear(embedding_dim, output_dim)
 
@@ -166,7 +174,7 @@ class GAT(nn.Module):
                 return layer(features, edge_index)
             edge_attr_supported = hasattr(layer, "lin_edge") and layer.lin_edge is not None
             if edge_attr_supported:
-                return layer(features, edge_index, edge_attr=edge_attr.to(torch.float32))
+                return layer(features, edge_index, edge_attr=edge_attr.to(torch.float32).view(-1, 1))
             return layer(features, edge_index)
 
         h = _forward_gat_layer(self.gat1, x)
@@ -242,8 +250,12 @@ class GIN(nn.Module):
                     ))
 
         self.out = Decoder_linear(embedding_dim, output_dim)
-    
+
     def forward(self, x, edge_index, edge_attr=None):
+        # edge_attr is accepted (for a uniform call signature across GCN/SAGE/GAT/GIN) but
+        # unused: plain GINConv sums neighbor features unweighted (Xu et al. 2019) and has no
+        # edge-feature input -- that capability is what GINEConv (below, unused by this
+        # benchmark's model factory) exists to add. Architectural property, not a bug.
         h = self.gin1(x, edge_index)
 
         if self.n_layers > 1:
