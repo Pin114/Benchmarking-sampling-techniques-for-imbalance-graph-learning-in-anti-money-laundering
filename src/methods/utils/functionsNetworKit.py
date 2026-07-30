@@ -40,6 +40,16 @@ def features_nx_calculations(G_nx, k=500, seed=None):
     closeness = closeness_nx(G_nx)
     eigenvector = eigenvector_nx(G_nx)
     features_df = betweenness.merge(closeness, on="PSP").merge(eigenvector, on="PSP")
+    # Index by node ID (PSP) to match the index convention used by the
+    # networkx-derived feature table (local_features_nx in
+    # functionsNetworkX.py, which indexes by real node ID via its
+    # feature_dict keys). Callers combine the two tables with
+    # pd.concat([...], axis=1), which aligns rows by index -- leaving this
+    # as the default positional RangeIndex silently misaligned the two
+    # tables whenever a subgraph's node IDs aren't already a contiguous
+    # 0..N-1 range in traversal order (e.g. any masked/filtered subgraph),
+    # producing NaN cells with no error at the concat site itself.
+    features_df = features_df.set_index("PSP")
     return features_df
 
 def features_nx(G_nx, ntw_name, k=500, seed=None):
