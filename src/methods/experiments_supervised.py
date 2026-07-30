@@ -869,12 +869,14 @@ def _build_graphsmote_sampling(
 ):
     """Shared sampling dispatch for GNN_features_graphsmote(_with_predictions). Returns
     (x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs,
-    pair_label_match) -- the last three are non-None only for sampling_name == 'gatsmote',
-    since that is the only technique whose topology is recomputed every training step.
+    pair_label_match, pair_hop_distance) -- the last four are non-None only for
+    sampling_name == 'gatsmote', since that is the only technique whose topology is recomputed
+    every training step.
     """
     gat_edge_gen = None
     synthetic_pairs = None
     pair_label_match = None
+    pair_hop_distance = None
 
     if sampling_name == "gatsmote":
         gat_edge_gen = GATEdgeGenerator(
@@ -889,6 +891,7 @@ def _build_graphsmote_sampling(
         )
         synthetic_pairs = prepared['synthetic_pairs'].to(device)
         pair_label_match = prepared['pair_label_match'].to(device)
+        pair_hop_distance = prepared['pair_hop_distance'].to(device)
     elif sampling_name == "targeted_neighbourhood_undersampling":
         # --tnu-remove-ratio overrides the outer imbalance-ratio sweep only when explicitly
         # set; its default (None) preserves the existing behavior of following `ratio` so the
@@ -908,12 +911,12 @@ def _build_graphsmote_sampling(
     else:
         raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
-    return x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match
+    return x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match, pair_hop_distance
 
 
 def GNN_features_graphsmote(
     ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, clip_norm=1.0,
-    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=1.0, gatsmote_lambda2=1.0, gatsmote_use_predicted_labels_for_homophily=False,
+    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=0.2, gatsmote_lambda2=0.05, gatsmote_use_predicted_labels_for_homophily=False,
     tnu_k_neighbors=10, tnu_distance_metric='cosine', tnu_remove_ratio=None, tnu_noise_threshold=0.5, tnu_min_majority_keep=1, tnu_preserve_minority_neighbors=True,
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -929,7 +932,7 @@ def GNN_features_graphsmote(
         return model(ones, edge_index, edge_attr=edge_attr)
 
     sampling_name = _normalize_sampling_name(sampling)
-    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match = (
+    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match, pair_hop_distance = (
         _build_graphsmote_sampling(
             sampling_name, train_mask, ntw_torch, k_neighbors, ratio, random_state,
             gatsmote_k_neighbors, gatsmote_heads, gatsmote_edge_threshold, gatsmote_lambda1, gatsmote_lambda2,
@@ -970,7 +973,7 @@ def GNN_features_graphsmote(
     def _current_graph():
         if gat_edge_gen is None:
             return ntw_torch_smote.edge_index, None, None, None
-        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match)
+        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match, pair_hop_distance)
 
     def train_epoch():
         model.train()
@@ -1038,7 +1041,7 @@ def GNN_features_graphsmote(
 
 def GNN_features_graphsmote_with_predictions(
     ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_loader: DataLoader = None, val_loader: DataLoader = None, test_loader: DataLoader = None, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, clip_norm=1.0,
-    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=1.0, gatsmote_lambda2=1.0, gatsmote_use_predicted_labels_for_homophily=False,
+    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=0.2, gatsmote_lambda2=0.05, gatsmote_use_predicted_labels_for_homophily=False,
     tnu_k_neighbors=10, tnu_distance_metric='cosine', tnu_remove_ratio=None, tnu_noise_threshold=0.5, tnu_min_majority_keep=1, tnu_preserve_minority_neighbors=True,
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -1054,7 +1057,7 @@ def GNN_features_graphsmote_with_predictions(
         return model(ones, edge_index, edge_attr=edge_attr)
 
     sampling_name = _normalize_sampling_name(sampling)
-    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match = (
+    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match, pair_hop_distance = (
         _build_graphsmote_sampling(
             sampling_name, train_mask, ntw_torch, k_neighbors, ratio, random_state,
             gatsmote_k_neighbors, gatsmote_heads, gatsmote_edge_threshold, gatsmote_lambda1, gatsmote_lambda2,
@@ -1092,7 +1095,7 @@ def GNN_features_graphsmote_with_predictions(
     def _current_graph():
         if gat_edge_gen is None:
             return ntw_torch_smote.edge_index, None, None, None
-        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match)
+        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match, pair_hop_distance)
 
     def train_epoch():
         model.train()

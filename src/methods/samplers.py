@@ -25,6 +25,12 @@ class GATEdgeGenerator(nn.Module):
     probability E^t in [0,1], and exposes two differentiable auxiliary losses (locality/cosine-
     similarity and homophily/label-mismatch) so the whole thing is optimized jointly with the
     downstream node classifier every training step.
+
+    NOTE (deliberate departure from the paper): this operates on raw input features, with no
+    pretrained GraphSage extractor producing the embeddings SMOTE/attention run over (the
+    paper's primary pipeline, Algorithm 1 lines 2-16). This matches the paper's secondary "raw
+    representations" ablation configuration instead (Section 4.2.4), and is consistent with how
+    every other sampling technique already implemented in this benchmark operates.
     """
 
     def __init__(
@@ -34,10 +40,28 @@ class GATEdgeGenerator(nn.Module):
         attention_heads=4,
         hidden_dim=None,
         edge_threshold=0.5,
-        lambda_locality=1.0,
-        lambda_shortest=1.0,
+        # Retuned for the bilinear loss_locality / distance-weighted loss_shortest
+        # formulas (see forward()), NOT copied from the paper's literal 0.04/0.01 --
+        # those were tuned for a different loss family (MSE locality, no distance
+        # term in loss_shortest) and don't transfer. Chosen via a sensitivity sweep
+        # so lambda_locality*loss_locality and lambda_shortest*loss_shortest sit at
+        # roughly 48% and 10% of loss_node's magnitude respectively (substantial but
+        # not dominating), at a ~4x ratio matching the paper's relative weighting.
+        #
+        # CAVEAT: that sweep ran on a small, well-scaled synthetic graph (loss_node
+        # ~O(0.1-0.5)), not on real hi_small-scale data. A follow-up attempt to
+        # validate against real hi_small produced an unusable result: loss_node
+        # exploded to the millions there, but that's an artifact of a separate,
+        # unrelated bug (raw Amount Received/Amount Paid feature columns are
+        # completely unnormalized -- up to ~2.8e11 -- with no scaling anywhere in
+        # the feature-loading pipeline), not a property of loss_node itself. These
+        # defaults are therefore unvalidated at real hi_small scale pending that
+        # separate fix; revisit once the feature-normalization gap is addressed.
+        lambda_locality=0.2,
+        lambda_shortest=0.05,
         ratio=None,
         use_predicted_labels_for_homophily=False,
+        max_hops=4,
         random_state=None,
     ):
         super().__init__()
@@ -48,6 +72,11 @@ class GATEdgeGenerator(nn.Module):
         self.lambda_locality = float(lambda_locality)
         self.lambda_shortest = float(lambda_shortest)
         self.ratio = ratio
+        # Cap on the BFS radius used to approximate structural distance for
+        # loss_shortest (see prepare_synthetic_nodes / _bounded_hop_distance).
+        # Pairs farther apart than this (or in a disconnected component) are
+        # clamped to max_hops, i.e. treated as "maximally distant".
+        self.max_hops = max(1, int(max_hops))
         self.use_predicted_labels_for_homophily = use_predicted_labels_for_homophily
         self.random_state = random_state
 
@@ -71,8 +100,33 @@ class GATEdgeGenerator(nn.Module):
             edge_index=edge_index,
             synthetic_pairs=torch.empty((2, 0), dtype=torch.long, device=device),
             pair_label_match=torch.empty((0,), dtype=torch.bool, device=device),
+            pair_hop_distance=torch.empty((0,), dtype=torch.float32, device=device),
             n_synthetic=0,
         )
+
+    @staticmethod
+    def _bounded_hop_distance(adjacency, source, max_hops):
+        """Unweighted BFS from `source` over `adjacency` (dict[int, set[int]]), stopping once
+        `max_hops` levels have been expanded. Returns {node: hop_distance} for every node
+        reached within the cap (source itself -> 0); nodes beyond the cap or in a different
+        component are simply absent, so callers should treat a missing lookup as "at least
+        max_hops away". Bounding the BFS radius (rather than computing full-graph shortest
+        paths, or exact walk counts / matrix powers as in the paper) keeps this tractable on
+        large, sparse AML transaction graphs regardless of total node count.
+        """
+        distances = {source: 0}
+        frontier = [source]
+        for hop in range(1, max_hops + 1):
+            next_frontier = []
+            for node in frontier:
+                for neighbor in adjacency.get(node, ()):
+                    if neighbor not in distances:
+                        distances[neighbor] = hop
+                        next_frontier.append(neighbor)
+            if not next_frontier:
+                break
+            frontier = next_frontier
+        return distances
 
     def prepare_synthetic_nodes(self, mask, features, labels, edge_index, predicted_labels=None):
         """One-shot, non-trainable step: SMOTE feature interpolation for the minority class plus
@@ -140,12 +194,26 @@ class GATEdgeGenerator(nn.Module):
         n_neighbors_query = min(self.k_neighbors + 1, features_masked.shape[0])
         nbrs = NearestNeighbors(n_neighbors=n_neighbors_query, algorithm='ball_tree').fit(features_masked)
 
+        # Adjacency over the REAL (pre-synthetic) graph, built once, used to approximate
+        # structural distance for loss_shortest. Synthetic nodes have no edges of their own
+        # (they don't exist in edge_index), so distance for a candidate pair is measured
+        # between the candidate and the synthetic node's "parent" -- its single nearest real
+        # minority-class neighbor in feature space (indices[0][0] below), the natural stand-in
+        # for where a SMOTE-interpolated node structurally sits.
+        adjacency = {}
+        for s, d in zip(edge_index_np[0].tolist(), edge_index_np[1].tolist()):
+            adjacency.setdefault(int(s), set()).add(int(d))
+            adjacency.setdefault(int(d), set()).add(int(s))
+        parent_hop_cache = {}
+
         n_original_nodes = features_np.shape[0]
         synthetic_pairs = []
         pair_label_match = []
+        pair_hop_distance = []
         for synthetic_idx in range(n_synthetic):
             synthetic_feature = X_smote[n_original + synthetic_idx].reshape(1, -1)
             _, indices = nbrs.kneighbors(synthetic_feature)
+            parent_idx = int(idx_mask[int(indices[0][0])])
             candidate_sources = [int(idx_mask[int(rel_idx)]) for rel_idx in indices[0][1:]]
             if not candidate_sources:
                 continue
@@ -156,15 +224,20 @@ class GATEdgeGenerator(nn.Module):
                 neighbor_labels = pred_np[candidate_sources]
             else:
                 neighbor_labels = labels_np[candidate_sources]
+            if parent_idx not in parent_hop_cache:
+                parent_hop_cache[parent_idx] = self._bounded_hop_distance(adjacency, parent_idx, self.max_hops)
+            dist_from_parent = parent_hop_cache[parent_idx]
             for src, neighbor_label in zip(candidate_sources, neighbor_labels):
                 synthetic_pairs.append([src, synthetic_global_idx])
                 pair_label_match.append(bool(neighbor_label == synthetic_label))
+                pair_hop_distance.append(dist_from_parent.get(src, self.max_hops))
 
         if not synthetic_pairs:
             return self._empty_prepared(features, labels, mask, edge_index, device)
 
         synthetic_pairs_t = torch.tensor(synthetic_pairs, dtype=torch.long, device=device).t().contiguous()
         pair_label_match_t = torch.tensor(pair_label_match, dtype=torch.bool, device=device)
+        pair_hop_distance_t = torch.tensor(pair_hop_distance, dtype=torch.float32, device=device)
 
         expanded_features = torch.from_numpy(expanded_features_np).to(dtype=dtype, device=device)
         expanded_labels_device = labels.device if is_torch_labels else device
@@ -180,10 +253,11 @@ class GATEdgeGenerator(nn.Module):
             edge_index=expanded_edge_index,
             synthetic_pairs=synthetic_pairs_t,
             pair_label_match=pair_label_match_t,
+            pair_hop_distance=pair_hop_distance_t,
             n_synthetic=n_synthetic,
         )
 
-    def forward(self, features, synthetic_pairs, pair_label_match=None):
+    def forward(self, features, synthetic_pairs, pair_label_match=None, pair_hop_distance=None):
         """Trainable multi-head attention pass over `synthetic_pairs` ([2, P]: row0 = existing
         candidate node index, row1 = synthetic node index). Recomputed every training step since
         W/a/fusion change with each gradient update -- this is the joint end-to-end path, not a
@@ -194,13 +268,17 @@ class GATEdgeGenerator(nn.Module):
             learnable nn.Linear(heads, 1).
           - loss_locality: pulls E^t toward the pair's cosine similarity in learned embedding
             space (maximize connectivity between feature-similar nodes).
-          - loss_shortest: penalizes E^t on pairs whose labels mismatch (homophily regularizer).
+          - loss_shortest: rewards same-label pairs proportional to hop-distance between the
+            candidate and the synthetic node's SMOTE parent (paper Eq. 11 / Hypothesis 2
+            approximation), plus a retained mismatch-label penalty -- see the fuller explanation
+            at its computation below.
         """
         if synthetic_pairs.numel() == 0:
             zero = features.sum() * 0.0
             return torch.empty((0,), dtype=features.dtype, device=features.device), zero, zero
 
         src_idx, dst_idx = synthetic_pairs[0], synthetic_pairs[1]
+        head_logits = []
         head_alphas = []
         head_embeds_src = []
         head_embeds_dst = []
@@ -210,38 +288,94 @@ class GATEdgeGenerator(nn.Module):
             z_dst = z[dst_idx]
             e = self.leaky_relu(a_h(torch.cat([z_src, z_dst], dim=-1))).squeeze(-1)
             # Neighbor-wise softmax normalization per synthetic (destination) node, matching GAT.
+            # Retained for any downstream use that needs a properly normalized
+            # per-destination attention distribution -- NOT used for the fusion
+            # below, since the paper fuses the raw pre-normalization score e^{tk}
+            # (Eq. 8/Algorithm 1) before the separate softmax normalization step.
             alpha = segment_softmax(e, dst_idx)
+            head_logits.append(e)
             head_alphas.append(alpha)
             head_embeds_src.append(z_src)
             head_embeds_dst.append(z_dst)
 
-        alpha_stack = torch.stack(head_alphas, dim=-1)  # [P, heads]
-        edge_logits = self.fusion(alpha_stack).squeeze(-1)  # [P]
+        logit_stack = torch.stack(head_logits, dim=-1)  # [P, heads], raw pre-softmax e^{tk}
+        edge_logits = self.fusion(logit_stack).squeeze(-1)  # [P]
         edge_probs = torch.sigmoid(edge_logits)
 
         mean_z_src = torch.stack(head_embeds_src, dim=0).mean(dim=0)
         mean_z_dst = torch.stack(head_embeds_dst, dim=0).mean(dim=0)
         cos_sim = F.cosine_similarity(mean_z_src, mean_z_dst, dim=-1)
         target_similarity = (cos_sim + 1.0) / 2.0
-        loss_locality = F.mse_loss(edge_probs, target_similarity.detach())
+        # Bilinear "push to extremes" locality loss (paper Eq. 10 / Hypothesis 1):
+        # pairs with high feature similarity should be pushed toward a hard edge
+        # (E^t -> 1), and pairs with low similarity toward a hard non-edge
+        # (E^t -> 0), rather than regressed toward the graded similarity value
+        # itself (which the previous MSE formulation did). Gradient wrt
+        # edge_probs is -2*(target_similarity - 0.5): zero at the midpoint (no
+        # push for ambiguous/orthogonal pairs), strengthening toward the
+        # extremes.
+        loss_locality = -(2.0 * edge_probs * (target_similarity.detach() - 0.5)).mean()
 
         if pair_label_match is not None and pair_label_match.numel() > 0:
-            mismatch = (~pair_label_match).to(edge_probs.dtype)
-            loss_shortest = (edge_probs * mismatch).mean()
+            match = pair_label_match.to(edge_probs.dtype)
+            mismatch = 1.0 - match
+            if pair_hop_distance is not None and pair_hop_distance.numel() == pair_label_match.numel():
+                distance_weight = torch.clamp(pair_hop_distance.to(edge_probs.dtype) / float(self.max_hops), 0.0, 1.0)
+            else:
+                distance_weight = torch.zeros_like(match)
+            # Single per-pair coefficient, one mean reduction over ALL pairs (not two
+            # independently-normalized means for the match/mismatch subsets) so neither
+            # group's influence is inflated relative to its actual share of the pair
+            # population:
+            #   same-label pairs (match=1): reward = -distance_weight * edge_probs, i.e.
+            #     pairs whose synthetic node's SMOTE parent is structurally FAR from the
+            #     candidate (distance_weight -> 1) get pushed toward E^t=1 (message
+            #     passing can't already reach them); pairs already structurally close
+            #     (distance_weight -> 0) get little/no push. This is the paper's Eq. 11 /
+            #     Hypothesis 2 mechanism, approximated via capped BFS hop-distance from the
+            #     synthetic node's parent instead of the paper's exact walk-count / matrix
+            #     power (see _bounded_hop_distance).
+            #     Measured on the real HI-Small AML graph (N=500k, E=631k) at max_hops=4:
+            #     only 0.33% of pairs resolve to a genuine hop count within the cap; of the
+            #     remaining saturated pairs, 99.11% (of all pairs) are in a DIFFERENT
+            #     connected component from their parent (provably unreachable at ANY hop
+            #     count -- this graph has 374k components over 500k nodes, 351k of them
+            #     singletons) and only 0.56% are same-component-but-beyond-the-cap. So on a
+            #     graph this sparse/fragmented, raising max_hops further would recover
+            #     negligible extra resolution -- distance_weight saturates near 1.0 for the
+            #     large majority of same-label pairs not because the cap is mistuned, but
+            #     because most candidate/parent pairs are structurally disconnected. The
+            #     mechanism still correctly grades the small resolvable minority and is
+            #     directionally correct for the rest (push connections message-passing can't
+            #     already reach); it just has low resolution among "far" cases at this scale.
+            #   mismatched-label pairs (match=0): penalty = +edge_probs, pushing toward
+            #     E^t=0. This penalty is a homophily regularizer carried over from the
+            #     pre-existing implementation -- it is NOT part of the paper's Eq. 11,
+            #     which has no mismatched-pair term, but is kept since it doesn't
+            #     contradict the paper's same-label mechanism (disjoint pair subsets).
+            per_pair_coeff = mismatch - match * distance_weight
+            loss_shortest = (per_pair_coeff * edge_probs).mean()
         else:
             loss_shortest = edge_probs.sum() * 0.0
 
         return edge_probs, loss_locality, loss_shortest
 
-    def build_epoch_graph(self, base_edge_index, features, synthetic_pairs, pair_label_match=None):
+    def build_epoch_graph(self, base_edge_index, features, synthetic_pairs, pair_label_match=None, pair_hop_distance=None):
         """Combines the fixed base edges with the current epoch's trainable synthetic edges.
 
         Synthetic pairs whose current E^t clears `edge_threshold` become (bidirectional) graph
         edges weighted by E^t; everything below is dropped from the topology used for message
         passing, though `edge_probs` (and hence loss_locality/loss_shortest) stays fully
         differentiable regardless of that hard cut.
+
+        NOTE (deliberate departure from the paper): the paper's Ã^t = A ∪ E^t treats E^t as a
+        continuous soft edge weight with no hard cutoff (Eq. 9 text). This code instead
+        hard-thresholds at `edge_threshold` before message passing, trading a small amount of
+        paper fidelity for a sparser, more efficient message-passing graph -- edge_probs (and
+        the two auxiliary losses) remain fully continuous and differentiable regardless of this
+        cutoff, so the trainable signal itself is unaffected.
         """
-        edge_probs, loss_locality, loss_shortest = self.forward(features, synthetic_pairs, pair_label_match)
+        edge_probs, loss_locality, loss_shortest = self.forward(features, synthetic_pairs, pair_label_match, pair_hop_distance)
         device = features.device
         dtype = features.dtype
 

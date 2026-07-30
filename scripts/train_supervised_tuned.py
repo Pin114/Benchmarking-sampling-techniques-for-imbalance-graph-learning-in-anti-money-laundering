@@ -64,8 +64,8 @@ if __name__ == "__main__":
     parser.add_argument('--gatsmote-k-neighbors', type=int, default=5)
     parser.add_argument('--gatsmote-heads', type=int, default=4, help='Number of attention heads')
     parser.add_argument('--gatsmote-edge-threshold', type=float, default=0.5, help='E^t cutoff for including a synthetic edge in the graph topology')
-    parser.add_argument('--gatsmote-lambda1', type=float, default=1.0, help='Weight of the locality (cosine-similarity) auxiliary loss')
-    parser.add_argument('--gatsmote-lambda2', type=float, default=1.0, help='Weight of the shortest-path/homophily auxiliary loss')
+    parser.add_argument('--gatsmote-lambda1', type=float, default=0.2, help='Weight of the locality (cosine-similarity) auxiliary loss')
+    parser.add_argument('--gatsmote-lambda2', type=float, default=0.05, help='Weight of the shortest-path/homophily auxiliary loss')
     parser.add_argument('--gatsmote-use-predicted-labels', action='store_true')
 
     # TNU params
