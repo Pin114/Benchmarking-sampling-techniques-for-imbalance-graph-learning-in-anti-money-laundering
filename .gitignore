@@ -430,4 +430,6 @@ res/
 ### VisualStudio Patch ###
 # Additional files built by Visual Studio
 
+data/data/
+
 # End of https://www.toptal.com/developers/gitignore/api/visualstudio
