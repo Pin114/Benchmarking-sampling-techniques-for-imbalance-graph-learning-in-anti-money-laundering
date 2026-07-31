@@ -702,7 +702,7 @@ def node2vec_features_with_predictions(
 # 4. Standard GNN Methods (Validation, Slicing Protected)
 # =====================================================================
 def GNN_features(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, sage_batch_size=1024, sage_num_neighbors=None
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, percentile_q: int = 99, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, clip_norm=1.0, sage_batch_size=1024, sage_num_neighbors=None
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -769,7 +769,7 @@ def GNN_features(
                 criterion = _build_weighted_criterion(y_batch)
                 loss_val = _compute_loss(criterion, out[:seed_n], y_batch)
                 loss_val.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
                 optimizer.step()
                 total_loss += loss_val.item() * seed_n
                 total_seeds += seed_n
@@ -824,7 +824,7 @@ def GNN_features(
     return test_result['ap'], test_result['f1']
 
 def GNN_features_with_predictions(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, sage_batch_size=1024, sage_num_neighbors=None
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model.pt", monitor: str = 'val_ap', ratio=None, sampling="none", loss="ce", loss_kwargs=None, seed=None, clip_norm=1.0, sage_batch_size=1024, sage_num_neighbors=None
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -889,7 +889,7 @@ def GNN_features_with_predictions(
                 criterion = _build_weighted_criterion(y_batch)
                 loss_val = _compute_loss(criterion, out[:seed_n], y_batch)
                 loss_val.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
                 optimizer.step()
                 total_loss += loss_val.item() * seed_n
                 total_seeds += seed_n
@@ -953,14 +953,24 @@ def _build_graphsmote_sampling(
 ):
     """Shared sampling dispatch for GNN_features_graphsmote(_with_predictions). Returns
     (x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs,
-    pair_label_match) -- the last three are non-None only for sampling_name == 'gatsmote',
-    since that is the only technique whose topology is recomputed every training step.
+    pair_label_match, pair_hop_distance) -- the last four are non-None only for
+    sampling_name == 'gatsmote', since that is the only technique whose topology is recomputed
+    every training step.
     """
     gat_edge_gen = None
     synthetic_pairs = None
     pair_label_match = None
+    pair_hop_distance = None
 
-    if sampling_name == "gatsmote":
+    # ratio=None ("Original" row in the sweep) must mean "no resampling", matching the
+    # semantics every other sampling family already uses (GNN_features/intrinsic_features
+    # gate their sampling branches on `and ratio is not None`, falling back to the untouched
+    # graph when ratio is None). Without this branch, graph_smote_mask/GATEdgeGenerator would
+    # still fully rebalance to ~1:1 and TNU would still remove every flagged noisy node under
+    # ratio=None, silently contradicting the "original distribution" label.
+    if ratio is None:
+        x_smote, y_smote, train_mask_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, train_mask.bool(), ntw_torch.edge_index
+    elif sampling_name == "gatsmote":
         gat_edge_gen = GATEdgeGenerator(
             in_dim=ntw_torch.x.shape[1], k_neighbors=gatsmote_k_neighbors, attention_heads=gatsmote_heads,
             edge_threshold=gatsmote_edge_threshold, lambda_locality=gatsmote_lambda1, lambda_shortest=gatsmote_lambda2,
@@ -973,6 +983,7 @@ def _build_graphsmote_sampling(
         )
         synthetic_pairs = prepared['synthetic_pairs'].to(device)
         pair_label_match = prepared['pair_label_match'].to(device)
+        pair_hop_distance = prepared['pair_hop_distance'].to(device)
     elif sampling_name == "targeted_neighbourhood_undersampling":
         # --tnu-remove-ratio overrides the outer imbalance-ratio sweep only when explicitly
         # set; its default (None) preserves the existing behavior of following `ratio` so the
@@ -992,11 +1003,13 @@ def _build_graphsmote_sampling(
     else:
         raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
 
-    return x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match
+    return x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match, pair_hop_distance
 
 
 def GNN_features_graphsmote(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, gatsmote_k_neighbors=5, gatsmote_attention_heads=1, gatsmote_edge_threshold=0.5, gatsmote_homophily_weight=1.0, gatsmote_use_predicted_labels_for_homophily=False
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, percentile_q: int = 99, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, clip_norm=1.0,
+    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=0.2, gatsmote_lambda2=0.05, gatsmote_use_predicted_labels_for_homophily=False,
+    tnu_k_neighbors=10, tnu_distance_metric='cosine', tnu_remove_ratio=None, tnu_noise_threshold=0.5, tnu_min_majority_keep=1, tnu_preserve_minority_neighbors=True,
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -1011,40 +1024,23 @@ def GNN_features_graphsmote(
         return model(ones, edge_index, edge_attr=edge_attr)
 
     sampling_name = _normalize_sampling_name(sampling)
-    # ratio=None ("Original" row in the sweep) must mean "no resampling", matching the
-    # semantics every other sampling family already uses (GNN_features/intrinsic_features
-    # gate their sampling branches on `and ratio is not None`, falling back to the
-    # untouched graph when ratio is None). Without this branch, graph_smote_mask/GATSMOTE
-    # would still fully rebalance to ~1:1 and TNU would still remove every flagged noisy
-    # node under ratio=None, silently contradicting the "original distribution" label.
-    if ratio is None:
-        x_smote, y_smote, train_mask_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, train_mask.bool(), ntw_torch.edge_index
-        edge_attr_smote = None
-    elif sampling_name == "reweighted_graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
+    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match, pair_hop_distance = (
+        _build_graphsmote_sampling(
+            sampling_name, train_mask, ntw_torch, k_neighbors, ratio, random_state,
+            gatsmote_k_neighbors, gatsmote_heads, gatsmote_edge_threshold, gatsmote_lambda1, gatsmote_lambda2,
+            gatsmote_use_predicted_labels_for_homophily,
+            tnu_k_neighbors, tnu_distance_metric, tnu_remove_ratio, tnu_noise_threshold,
+            tnu_min_majority_keep, tnu_preserve_minority_neighbors,
+            device,
         )
-    elif sampling_name == "unweighted_graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = unweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
-        )
-        edge_attr_smote = None
-    elif sampling_name == "gatsmote":
-        sampler = GATSMOTE(k_neighbors=gatsmote_k_neighbors, attention_heads=gatsmote_attention_heads, edge_threshold=gatsmote_edge_threshold, homophily_weight=gatsmote_homophily_weight, ratio=ratio, use_predicted_labels_for_homophily=gatsmote_use_predicted_labels_for_homophily, random_state=random_state)
-        x_smote, y_smote, train_mask_smote, edge_index_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index)
-        edge_attr_smote = None
-    elif sampling_name == "targeted_neighbourhood_undersampling":
-        sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=random_state)
-        train_mask_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y)
-        x_smote, y_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, ntw_torch.edge_index
-        edge_attr_smote = None
-    elif sampling_name == "graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
-        )
-        edge_attr_smote = None
-    else:
-        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
+    )
+    # Checkpointing/restoring must cover the edge generator too when it exists, otherwise
+    # early-stopping would restore the best classifier weights alongside a GATEdgeGenerator
+    # left at whatever state training happened to end on -- a state the classifier never saw.
+    checkpoint_target = nn.ModuleList([model, gat_edge_gen]) if gat_edge_gen is not None else model
+    early_stopping = EarlyStopping(
+        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
+    )
 
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
@@ -1069,7 +1065,7 @@ def GNN_features_graphsmote(
     def _current_graph():
         if gat_edge_gen is None:
             return ntw_torch_smote.edge_index, None, None, None
-        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match)
+        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match, pair_hop_distance)
 
     def train_epoch():
         model.train()
@@ -1136,7 +1132,9 @@ def GNN_features_graphsmote(
     return test_result['ap'], test_result['f1']
 
 def GNN_features_graphsmote_with_predictions(
-    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, gatsmote_k_neighbors=5, gatsmote_attention_heads=1, gatsmote_edge_threshold=0.5, gatsmote_homophily_weight=1.0, gatsmote_use_predicted_labels_for_homophily=False
+    ntw_torch, model: nn.Module, lr: float, n_epochs: int, train_mask: torch.Tensor = None, val_mask: torch.Tensor = None, test_mask: torch.Tensor = None, use_intrinsic: bool = True, k_neighbors: int = 5, random_state: int = None, sampling: str = "graph_smote", patience: int = 10, checkpoint_path: str = "res/checkpoints/best_model_graphsmote.pt", monitor: str = 'val_ap', ratio=None, loss="ce", loss_kwargs=None, clip_norm=1.0,
+    gatsmote_k_neighbors=5, gatsmote_heads=4, gatsmote_edge_threshold=0.5, gatsmote_lambda1=0.2, gatsmote_lambda2=0.05, gatsmote_use_predicted_labels_for_homophily=False,
+    tnu_k_neighbors=10, tnu_distance_metric='cosine', tnu_remove_ratio=None, tnu_noise_threshold=0.5, tnu_min_majority_keep=1, tnu_preserve_minority_neighbors=True,
 ):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -1151,40 +1149,20 @@ def GNN_features_graphsmote_with_predictions(
         return model(ones, edge_index, edge_attr=edge_attr)
 
     sampling_name = _normalize_sampling_name(sampling)
-    # ratio=None ("Original" row in the sweep) must mean "no resampling", matching the
-    # semantics every other sampling family already uses (GNN_features/intrinsic_features
-    # gate their sampling branches on `and ratio is not None`, falling back to the
-    # untouched graph when ratio is None). Without this branch, graph_smote_mask/GATSMOTE
-    # would still fully rebalance to ~1:1 and TNU would still remove every flagged noisy
-    # node under ratio=None, silently contradicting the "original distribution" label.
-    if ratio is None:
-        x_smote, y_smote, train_mask_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, train_mask.bool(), ntw_torch.edge_index
-        edge_attr_smote = None
-    elif sampling_name == "reweighted_graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote, edge_attr_smote = reweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
+    x_smote, y_smote, train_mask_smote, edge_index_smote, gat_edge_gen, synthetic_pairs, pair_label_match, pair_hop_distance = (
+        _build_graphsmote_sampling(
+            sampling_name, train_mask, ntw_torch, k_neighbors, ratio, random_state,
+            gatsmote_k_neighbors, gatsmote_heads, gatsmote_edge_threshold, gatsmote_lambda1, gatsmote_lambda2,
+            gatsmote_use_predicted_labels_for_homophily,
+            tnu_k_neighbors, tnu_distance_metric, tnu_remove_ratio, tnu_noise_threshold,
+            tnu_min_majority_keep, tnu_preserve_minority_neighbors,
+            device,
         )
-    elif sampling_name == "unweighted_graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = unweighted_graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
-        )
-        edge_attr_smote = None
-    elif sampling_name == "gatsmote":
-        sampler = GATSMOTE(k_neighbors=gatsmote_k_neighbors, attention_heads=gatsmote_attention_heads, edge_threshold=gatsmote_edge_threshold, homophily_weight=gatsmote_homophily_weight, ratio=ratio, use_predicted_labels_for_homophily=gatsmote_use_predicted_labels_for_homophily, random_state=random_state)
-        x_smote, y_smote, train_mask_smote, edge_index_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index)
-        edge_attr_smote = None
-    elif sampling_name == "targeted_neighbourhood_undersampling":
-        sampler = TargetedNeighbourhoodUndersampling(remove_ratio=ratio, random_state=random_state)
-        train_mask_smote = sampler(train_mask, ntw_torch.x, ntw_torch.y)
-        x_smote, y_smote, edge_index_smote = ntw_torch.x, ntw_torch.y, ntw_torch.edge_index
-        edge_attr_smote = None
-    elif sampling_name == "graph_smote":
-        x_smote, y_smote, train_mask_smote, edge_index_smote = graph_smote_mask(
-            train_mask, ntw_torch.x, ntw_torch.y, ntw_torch.edge_index, k_neighbors=k_neighbors, ratio=ratio, random_state=random_state
-        )
-        edge_attr_smote = None
-    else:
-        raise ValueError(f"Unrecognized sampling technique: {sampling_name!r}")
+    )
+    checkpoint_target = nn.ModuleList([model, gat_edge_gen]) if gat_edge_gen is not None else model
+    early_stopping = EarlyStopping(
+        patience=patience, verbose=True, checkpoint_path=checkpoint_path, monitor=monitor
+    )
 
     ntw_torch_smote = ntw_torch.clone()
     ntw_torch_smote.x = x_smote.to(device)
@@ -1209,7 +1187,7 @@ def GNN_features_graphsmote_with_predictions(
     def _current_graph():
         if gat_edge_gen is None:
             return ntw_torch_smote.edge_index, None, None, None
-        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match)
+        return gat_edge_gen.build_epoch_graph(ntw_torch_smote.edge_index, ntw_torch_smote.x, synthetic_pairs, pair_label_match, pair_hop_distance)
 
     def train_epoch():
         model.train()
