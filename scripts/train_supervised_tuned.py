@@ -89,7 +89,7 @@ if __name__ == "__main__":
 
     ntw_name = args.network
     # Expanded imbalance ratios (majority multiplier). None means original distribution.
-    test_ratios = [None, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0]
+    test_ratios = [None, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 500.0, 1000.0]
     ratio_names = {
         None: "original",
         1.0: "ratio_1to1",
@@ -99,10 +99,8 @@ if __name__ == "__main__":
         20.0: "ratio_1to20",
         50.0: "ratio_1to50",
         100.0: "ratio_1to100",
-        200.0: "ratio_1to200",
         500.0: "ratio_1to500",
         1000.0: "ratio_1to1000",
-        2000.0: "ratio_1to2000",
     }
 
     try:

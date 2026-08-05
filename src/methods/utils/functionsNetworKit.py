@@ -26,9 +26,40 @@ def closeness_nx(G_nx):
     closeness_df = pd.DataFrame({"PSP": psp_list, "Closeness": closeness_list})
     return closeness_df
 
+def _eigenvector_per_component(G_nx):
+    # eigenvector_centrality_numpy refuses disconnected graphs outright (AmbiguousSolution),
+    # but each connected component on its own is a well-posed eigenproblem. Fragmented graphs
+    # (e.g. IBM transaction chains, which are largely short disjoint chains/components) are
+    # exactly the case where the whole-graph power iteration in eigenvector_nx fails to
+    # converge, so solving component-by-component recovers a real, non-degenerate signal
+    # instead of collapsing the feature to a constant for the whole graph.
+    eigen_full = {}
+    for component_nodes in nx.connected_components(G_nx):
+        subgraph = G_nx.subgraph(component_nodes)
+        if len(component_nodes) == 1:
+            # A single isolated node has no meaningful eigenvector centrality; 0.0 is the
+            # standard convention.
+            (node,) = component_nodes
+            eigen_full[node] = 0.0
+            continue
+        try:
+            eigen_full.update(nx.eigenvector_centrality_numpy(subgraph))
+        except Exception:
+            for node in component_nodes:
+                eigen_full[node] = 0.0
+    return eigen_full
+
+
 def eigenvector_nx(G_nx):
     print("Calculating eigenvector centrality...")
-    eigen_full = nx.eigenvector_centrality(G_nx, max_iter=1000)
+    try:
+        eigen_full = nx.eigenvector_centrality(G_nx, max_iter=1000)
+    except nx.PowerIterationFailedConvergence:
+        # Power iteration on the whole graph is prone to non-convergence on graphs with many
+        # small/disconnected components, even though each component individually has a
+        # well-defined solution.
+        print("Power iteration did not converge; falling back to per-component eigenvector_centrality_numpy...")
+        eigen_full = _eigenvector_per_component(G_nx)
     print("Done")
     psp_list = list(G_nx.nodes())
     eigen_list = [eigen_full[u] for u in psp_list]
