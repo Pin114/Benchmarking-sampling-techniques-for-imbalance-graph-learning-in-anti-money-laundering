@@ -108,6 +108,23 @@ class network_AML():
         x = torch.tensor(np.array(features.values, dtype=float), dtype=torch.float)
         if x.size()[1] == 0:
             x = torch.ones(x.size()[0], 1)
+        else:
+            # Standardize per-feature using train-split statistics only (fitting
+            # on the full array would leak val/test distribution into the scale
+            # applied to them). Without this, IBM's raw "Amount Received"/
+            # "Amount Paid" columns (up to ~1e11) get summed over neighborhoods
+            # by GNN message passing and can blow the first layer's activations
+            # to inf/nan for some random initializations -- silently producing
+            # NaN-loss "successful" runs rather than a visible failure.
+            if self.train_mask is not None:
+                train_mask_bool = self.train_mask.bool() if torch.is_tensor(self.train_mask) else torch.tensor(np.array(self.train_mask, dtype=bool))
+            else:
+                train_mask_bool = torch.ones(x.size(0), dtype=torch.bool)
+            x_train = x[train_mask_bool]
+            mean = x_train.mean(dim=0, keepdim=True)
+            std = x_train.std(dim=0, keepdim=True)
+            std = torch.where(std < 1e-8, torch.ones_like(std), std)
+            x = (x - mean) / std
 
         y = torch.tensor(np.array(labels.values, dtype=np.int64), dtype=torch.long)
 

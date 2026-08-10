@@ -260,6 +260,14 @@ def blended_neighbor_sampling(
     if n_target > 0:
         weights.index_add_(0, inverse[n_minor:], torch.full((n_target,), float(target_mass)))
 
+    if not torch.isfinite(weights).all() or (weights < 0).any():
+        # phi_hat (and hence these weights) is derived from the live model's
+        # confidence for this epoch; if upstream logits blow up (e.g. large-
+        # magnitude unnormalized input features on some networks) the softmax
+        # in aggregate_confidence can collapse to NaN, which torch.multinomial
+        # refuses outright. Fall back to a uniform draw over the candidate
+        # neighbors rather than hard-crashing the whole training run.
+        weights = torch.ones_like(weights)
     if weights.sum() <= 0:
         return torch.empty(0, dtype=torch.long)
     num_samples = min(num_samples, unique_nodes.numel())  # without replacement cannot exceed the candidate pool
