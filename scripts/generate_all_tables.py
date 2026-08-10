@@ -4,6 +4,14 @@ import re
 import statistics
 from pathlib import Path
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+# Try to import tqdm for progress bar; fallback to light print if unavailable
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
 
 DATASET_MAP = {
     'hi_small': 'IBM HI-SMALL',
@@ -46,9 +54,6 @@ METHOD_SAMPLING_MAP = {
     'GIN': ['NONE', 'RUS', 'GRAPH_SMOTE', 'GRAPH_ENSEMBLE_SMOTE', 'GATSMOTE', 'TNU'],
 }
 
-# Longest/most-specific sampling tags first: "gatsmote" and "graph_smote" both contain
-# "smote" as a substring, so checking in the wrong order would misclassify them as plain
-# SMOTE. Same reasoning applies to "graph_ensemble_smote" vs "graph_smote".
 SAMPLING_TAG_ORDER = ['gatsmote', 'tnu', 'graph_ensemble_smote', 'graph_smote', 'smote', 'rus']
 
 SEED_RE = re.compile(r'_seed(\d+)')
@@ -103,7 +108,6 @@ def parse_both_metrics(path: Path):
             return None, None, None
 
         lines = content.splitlines()
-        # 1. Parse line by line to support multi-line summary formats
         for line in lines:
             if ':' in line:
                 key, val = line.split(':', 1)
@@ -115,7 +119,6 @@ def parse_both_metrics(path: Path):
                 elif 'F1_99' in key_upper or key_upper == 'F1':
                     f1_val = val.strip()
 
-        # 2. Fallback: Parse inline tokens separated by commas
         if not auc_val or not f1_val or not f1_90_val:
             tokens = content.split(',')
             for token in tokens:
@@ -133,6 +136,31 @@ def parse_both_metrics(path: Path):
     return auc_val, f1_val, f1_90_val
 
 
+def process_single_file(path: Path):
+    """Worker function for multiprocessing."""
+    if path.name.startswith('.') or path.name.endswith('_summary.txt'):
+        return None
+
+    method, dataset, ratio, sampling, seed = infer_metadata(path)
+    if dataset not in DATASET_MAP or method not in METHODS:
+        return None
+
+    auc_val, f1_val, f1_90_val = parse_both_metrics(path)
+    return {
+        'path': path,
+        'method': method,
+        'dataset': dataset,
+        'ratio': ratio,
+        'sampling': sampling,
+        'seed': seed,
+        'metrics': {
+            'AUC-PRC': auc_val,
+            'F1_99': f1_val,
+            'F1_90': f1_90_val
+        }
+    }
+
+
 def clean_val(val_str):
     if not val_str or val_str in ('N/A', '-'):
         return None
@@ -146,11 +174,6 @@ def clean_val(val_str):
 
 
 def aggregate_cell(values_by_seed):
-    """values_by_seed: {seed_key: float}. Returns (mean, std_or_None, n) or None if empty.
-    std uses the sample standard deviation (ddof=1, statistics.stdev) -- the standard
-    convention for reporting variability across independent repeated runs/seeds -- and is
-    only computed when there are at least 2 seeds; a single-seed cell reports a bare value.
-    """
     if not values_by_seed:
         return None
     values = list(values_by_seed.values())
@@ -177,35 +200,46 @@ def main():
     tables_dir = Path('tables')
     tables_dir.mkdir(exist_ok=True)
 
-    # raw[metric_type][dataset][sampling][method][ratio] = {seed_key: value}
-    # Keying by seed (rather than overwriting a single scalar) is what lets multiple
-    # --seed runs of the same configuration get aggregated into mean +/- std below,
-    # instead of the last file glob() happens to visit silently winning.
     raw = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))))
 
     all_files = sorted(res_dir.glob('**/*.txt'))
-    print(f"Total files found in res/: {len(all_files)}")
+    total_files = len(all_files)
+    print(f"Total files found in res/: {total_files}")
+
+    # Process files in parallel
+    parsed_results = []
+    with ProcessPoolExecutor() as executor:
+        if HAS_TQDM:
+            results = list(tqdm(executor.map(process_single_file, all_files, chunksize=100), total=total_files, desc="Processing files"))
+        else:
+            futures = [executor.submit(process_single_file, p) for p in all_files]
+            results = []
+            for idx, future in enumerate(as_completed(futures), 1):
+                results.append(future.result())
+                if idx % 1000 == 0 or idx == total_files:
+                    print(f"Processed {idx}/{total_files} files...")
 
     no_seed_counter = 0
     seeds_seen = set()
-    for path in all_files:
-        if path.name.startswith('.') or path.name.endswith('_summary.txt'):
+
+    for item in results:
+        if item is None:
             continue
-        method, dataset, ratio, sampling, seed = infer_metadata(path)
-        if dataset not in DATASET_MAP or method not in METHODS:
-            continue
+
+        method = item['method']
+        dataset = item['dataset']
+        ratio = item['ratio']
+        sampling = item['sampling']
+        seed = item['seed']
 
         if seed is not None:
             seed_key = f"seed{seed}"
             seeds_seen.add(seed)
         else:
-            # No --seed was passed for this run; give it its own slot instead of colliding
-            # with (and silently overwriting) any other seedless run of the same cell.
             no_seed_counter += 1
             seed_key = f"noseed{no_seed_counter}"
 
-        auc_val, f1_val, f1_90_val = parse_both_metrics(path)
-        for metric_name, raw_str in (('AUC-PRC', auc_val), ('F1_99', f1_val), ('F1_90', f1_90_val)):
+        for metric_name, raw_str in item['metrics'].items():
             f_val = clean_val(raw_str)
             if f_val is not None:
                 raw[metric_name][dataset][sampling][method][ratio][seed_key] = f_val

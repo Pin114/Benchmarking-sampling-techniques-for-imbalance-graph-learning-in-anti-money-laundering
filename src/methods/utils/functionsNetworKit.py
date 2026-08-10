@@ -1,3 +1,5 @@
+import random
+
 import networkx as nx
 import pandas as pd
 
@@ -17,9 +19,45 @@ def betweenness_nx(G_nx, k=500, seed=None):
     betweenness_df = pd.DataFrame({"PSP": psp_list, "Betweenness": betweenness_list})
     return betweenness_df
 
-def closeness_nx(G_nx):
-    print("Calculating closeness...")
-    closeness_full = nx.closeness_centrality(G_nx)
+def closeness_nx(G_nx, k=500, seed=None):
+    # Exact closeness_centrality runs a full BFS from every single node (O(V*(V+E)))
+    # with no built-in sampling, unlike betweenness_centrality above which already
+    # accepts k. On a large, mostly-small-component graph (e.g. IBM's transaction-chain
+    # graphs, which fragment into hundreds of thousands of components), this is cheap
+    # for the many small components but can be memory/compute-prohibitive for whichever
+    # component happens to be large -- exactly the case observed on real IBM data,
+    # where a single 500k-node run drove the host into swap. Mirror betweenness's k-based
+    # landmark sampling instead: compute exactly for components no larger than k (still
+    # the common case, since most components here are tiny), and for larger components
+    # estimate closeness from k random landmarks' single-source shortest-path distances
+    # (standard Eppstein-Wang-style approximation), which needs only O(k*(V+E)) work and
+    # O(V) memory instead of O(V*(V+E)) work.
+    print(f"Calculating closeness (k={k}, seed={seed})...")
+    rng = random.Random(seed)
+    closeness_full = {}
+    for component_nodes in nx.connected_components(G_nx):
+        component_nodes = list(component_nodes)
+        comp_size = len(component_nodes)
+        if comp_size <= 1:
+            for node in component_nodes:
+                closeness_full[node] = 0.0
+            continue
+        subgraph = G_nx.subgraph(component_nodes)
+        if comp_size <= k:
+            closeness_full.update(nx.closeness_centrality(subgraph))
+            continue
+        landmarks = rng.sample(component_nodes, k)
+        distance_sum = {node: 0.0 for node in component_nodes}
+        for landmark in landmarks:
+            lengths = nx.single_source_shortest_path_length(subgraph, landmark)
+            for node, dist in lengths.items():
+                distance_sum[node] += dist
+        scale = comp_size / len(landmarks)
+        for node in component_nodes:
+            estimated_total_distance = distance_sum[node] * scale
+            closeness_full[node] = (
+                (comp_size - 1) / estimated_total_distance if estimated_total_distance > 0 else 0.0
+            )
     print("Done")
     psp_list = list(G_nx.nodes())
     closeness_list = [closeness_full[u] for u in psp_list]
@@ -68,7 +106,7 @@ def eigenvector_nx(G_nx):
 
 def features_nx_calculations(G_nx, k=500, seed=None):
     betweenness = betweenness_nx(G_nx, k=k, seed=seed)
-    closeness = closeness_nx(G_nx)
+    closeness = closeness_nx(G_nx, k=k, seed=seed)
     eigenvector = eigenvector_nx(G_nx)
     features_df = betweenness.merge(closeness, on="PSP").merge(eigenvector, on="PSP")
     # Index by node ID (PSP) to match the index convention used by the

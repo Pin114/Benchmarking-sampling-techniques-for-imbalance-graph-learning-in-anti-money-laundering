@@ -208,11 +208,11 @@ if __name__ == "__main__":
                 try:
                     if method == "intrinsic":
                         ap_score, y_pred_probs, y_true = intrinsic_features_with_predictions(
-                            ntw, train_mask_ratio, val_mask, test_mask, n_layers_decoder=2, hidden_dim_decoder=16, lr=args.lr, n_epochs_decoder=100, ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed
+                            ntw, train_mask_ratio, val_mask, test_mask, n_layers_decoder=2, hidden_dim_decoder=16, lr=args.lr, n_epochs_decoder=100, ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed, checkpoint_path=unique_checkpoint_path
                         )
                     elif method == "positional":
                         ap_score, y_pred_probs, y_true = positional_features_with_predictions(
-                            ntw, train_mask_ratio, val_mask, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=args.lr, fraud_dict_train=fraud_dict_known, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, ntw_name=ntw_name+"_train_tuned", ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed
+                            ntw, train_mask_ratio, val_mask, test_mask, alpha_pr=0.5, alpha_ppr=0, n_epochs_decoder=50, lr=args.lr, fraud_dict_train=fraud_dict_known, fraud_dict_test=fraud_dict, n_layers_decoder=2, hidden_dim_decoder=16, ntw_name=ntw_name+"_train_tuned", ratio=ratio, sampling=sampling, loss=args.loss, loss_kwargs=loss_kwargs, seed=args.seed, checkpoint_path=unique_checkpoint_path
                         )
                     elif method == "deepwalk" or method == "node2vec":
                         p_val = 1.0 if method == "deepwalk" else 1.5
