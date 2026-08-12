@@ -134,9 +134,14 @@ if __name__ == "__main__":
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         ntw_torch = ntw.get_network_torch().to(device)
+        assert torch.isfinite(ntw_torch.x).all(), \
+            f"ntw_torch.x contains non-finite values for network '{ntw_name}' right after get_network_torch()"
 
         if ntw_name == "elliptic":
             ntw_torch.x = ntw_torch.x[:, 1:94]
+            if not torch.isfinite(ntw_torch.x).all():
+                n_bad = (~torch.isfinite(ntw_torch.x)).sum().item()
+                print(f"WARNING: {n_bad} non-finite values in elliptic's sliced local-feature columns before nan_to_num sanitization")
             ntw_torch.x = torch.nan_to_num(ntw_torch.x, nan=0.0, posinf=1e5, neginf=-1e5)
 
         edge_index = ntw_torch.edge_index if hasattr(ntw_torch, 'edge_index') else torch.empty((2, 0), dtype=torch.long)
@@ -246,6 +251,13 @@ if __name__ == "__main__":
                                 gatsmote_k_neighbors=args.gatsmote_k_neighbors, gatsmote_heads=args.gatsmote_heads, gatsmote_edge_threshold=args.gatsmote_edge_threshold, gatsmote_lambda1=args.gatsmote_lambda1, gatsmote_lambda2=args.gatsmote_lambda2, gatsmote_use_predicted_labels_for_homophily=args.gatsmote_use_predicted_labels,
                                 tnu_k_neighbors=args.tnu_k_neighbors, tnu_distance_metric=args.tnu_distance_metric, tnu_remove_ratio=args.tnu_remove_ratio, tnu_noise_threshold=args.tnu_noise_threshold, tnu_min_majority_keep=args.tnu_min_majority_keep, tnu_preserve_minority_neighbors=args.tnu_preserve_minority_neighbors,
                             )
+
+                    pred_dir = out_path / "predictions"
+                    pred_dir.mkdir(parents=True, exist_ok=True)
+                    np.savez(pred_dir / f"{method}_preds_{result_tag}.npz", y_pred_probs=y_pred_probs, y_true=y_true)
+                    n_unique_preds = np.unique(y_pred_probs).size
+                    if n_unique_preds == 1:
+                        print(f"WARNING: model output is constant (unique predicted probabilities = 1) for method={method} sampling={sampling} ratio={ratio_tag} -- likely a collapsed/degenerate model")
 
                     from sklearn.metrics import f1_score
                     # Both F1_99 and F1_90 are derived from the same single y_pred_probs/y_true

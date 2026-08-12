@@ -432,4 +432,8 @@ res/
 
 data/data/
 
+docs_internal/
+
+*.out
+
 # End of https://www.toptal.com/developers/gitignore/api/visualstudio

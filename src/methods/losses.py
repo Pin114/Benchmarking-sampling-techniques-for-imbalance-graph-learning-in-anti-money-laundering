@@ -23,7 +23,11 @@ class FocalLoss(nn.Module):
             counts = counts[counts > 0]
             if counts.numel() == 0:
                 return None
-            weights = counts.max() / counts
+            # Capped for the same reason as MAX_POS_WEIGHT in experiments_supervised.py's
+            # _build_loss_criterion: on extreme class imbalance (e.g. IBM HI-Small, where this
+            # ratio reaches ~1959.8), an uncapped weight can saturate the gradient and contribute
+            # to NaN blowups rather than just correcting for class frequency.
+            weights = torch.clamp(counts.max() / counts, max=50.0)
             if classes.numel() > 0:
                 weight_map = torch.zeros(int(classes.max().item()) + 1, dtype=torch.float32, device=device)
                 for idx, cls in enumerate(classes.tolist()):
