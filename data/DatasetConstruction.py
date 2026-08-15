@@ -146,8 +146,37 @@ def load_ibm_config(config_name='hi_small'):
 
     csv_name = config_map[config_name]
     df_features = _read_csv_with_retries(os.path.join(path, csv_name))
-    df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], dayfirst=True, errors='coerce')  # IBM timestamp format
-#     df_features['Timestamp'] = pd.to_datetime(df_features['Timestamp'], format='%Y/%m/%d %H:%M')  # Elliptic timestamp format
+    # The IBM release ships two incompatible Timestamp formats across its CSVs:
+    # HI-Small uses D/M/Y (e.g. "01/09/2022 0:20", needs dayfirst=True), while
+    # HI-Medium/LI-Small/LI-Medium use Y/M/D (e.g. "2022/09/01 00:17"). Applying
+    # dayfirst=True uniformly to both -- the previous behavior -- doesn't just fail
+    # loudly on the Y/M/D files: for any row whose day-of-month is <=12 it silently
+    # SWAPS month and day into a different, wrong-but-valid date (e.g. "2022/09/01"
+    # becomes 2022-01-09), and only rows with day-of-month >12 fail visibly as NaT.
+    # Detect the format per row from the first token instead of assuming one file-wide
+    # convention, so both conventions parse correctly regardless of which CSV is loaded.
+    raw_ts = df_features['Timestamp'].astype(str)
+    is_ymd_format = raw_ts.str.match(r'^\d{4}/')
+    parsed_ts = pd.Series(pd.NaT, index=df_features.index, dtype='datetime64[ns]')
+    if is_ymd_format.any():
+        parsed_ts.loc[is_ymd_format] = pd.to_datetime(
+            raw_ts[is_ymd_format], format='%Y/%m/%d %H:%M', errors='coerce'
+        )
+    if (~is_ymd_format).any():
+        parsed_ts.loc[~is_ymd_format] = pd.to_datetime(
+            raw_ts[~is_ymd_format], dayfirst=True, errors='coerce'
+        )
+    df_features['Timestamp'] = parsed_ts
+    # errors='coerce' turns unparseable timestamp strings into NaT; a handful of rows
+    # (data-entry artifacts in the raw CSV) hit this. Drop them here rather than let NaT
+    # propagate into the derived Day/Hour/Minute columns as NaN -- a NaN node feature
+    # spreads to every neighbor within a few hops of GNN message-passing (sum aggregation
+    # over a NaN input is NaN), and per-column feature standardization turns even a single
+    # NaN row into a NaN mean/std for that whole column, poisoning all rows.
+    n_before = len(df_features)
+    df_features = df_features[df_features['Timestamp'].notna()]
+    if len(df_features) < n_before:
+        print(f"Dropped {n_before - len(df_features)} rows with unparseable Timestamp")
     df_features.sort_values('Timestamp', inplace=True)
     df_features = df_features[df_features['Account']!= df_features['Account.1']]
 

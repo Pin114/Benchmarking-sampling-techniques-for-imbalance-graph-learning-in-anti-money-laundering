@@ -4,6 +4,20 @@ This repository provides an end-to-end, technically rigorous benchmarking pipeli
 
 By implementing strict **temporal splits** (chronological isolation) and a validation-guided **Early Stopping** mechanism, this pipeline prevents data leakage and overfitting, ensuring that reported model performance reflects true generalization capabilities.
 
+The full experimental writeup, including per-dataset result tables and the interpretation below, is in the thesis (`paper_latex/01_Working-version/main.tex`, Chapter 4 "Result" and Chapter 5 "Conclusion").
+
+---
+
+## Key Findings
+
+Across five datasets (real-world Elliptic, synthetic IBM HI-Small/HI-Medium/LI-Small/LI-Medium), eight learning algorithms, up to six sampling techniques, and a numerical target-ratio grid, no single sampling technique or target ratio was best across the board. The central conclusion is that the effectiveness of resampling in imbalanced graph learning is shaped by the interaction between dataset regime, representation model, graph topology, and target ratio, rather than being an intrinsic property of the sampling technique alone:
+
+- **Elliptic (native imbalance ≈ 8.2:1, training split):** the Intrinsic feature-based classifier is the strongest baseline, indicating local transaction features already carry substantial signal without graph resampling. Most classifiers improve with at least one sampling technique at its best ratio; Node2Vec is the one exception, where the original distribution beats every resampled configuration. Best-performing ratios are spread across the full grid rather than concentrated at 1:1. Among graph-aware techniques, TNU (Targeted Neighbourhood Undersampling) is the strongest choice for 3 of 4 GNN architectures.
+- **IBM datasets (native imbalance ≈ 115:1 to 937:1):** baseline performance is much weaker than Elliptic, and some techniques (notably GraphENS) can produce large mean AUC-PRC gains, but frequently with a standard deviation comparable to or larger than the mean itself across seeds — this instability is treated as a genuine finding, not noise to average away. No technique dominates: across 12 (classifier, dataset) GNN combinations, RUS is best in 5, GraphSMOTE and GATSMOTE in 3 each, TNU in 1, and GraphENS in 0 (despite sometimes improving substantially over baseline in specific configurations).
+- **Operational thresholds ($F_{1,90}$ vs. $F_{1,99}$):** threshold-independent AUC-PRC and alert-budget-constrained $F_1$ do not always agree. On Elliptic and IBM HI-Medium, performance declines when moving to a stricter 1% alert budget; on the more extremely imbalanced HI-Small and LI-Small, this reverses for most GNN architectures. The direction appears graded with native imbalance severity, so operational threshold behaviour needs to be checked explicitly per deployment rather than inferred from AUC-PRC alone.
+
+IBM LI-Medium is still completing its full sampling-ratio sweep as of this writing; its results will be added once all seeds finish.
+
 ---
 
 ## 1. Pipeline Architecture & Data Flow
@@ -169,6 +183,7 @@ Both auxiliary losses are added to the node-classification loss every training s
 
 ## Known Limitations
 
+- **The class-imbalance loss weight (`pos_weight`) is capped at `MAX_POS_WEIGHT = 50.0`** (`src/methods/experiments_supervised.py`), rather than left at its uncapped value of `N0/N1`. On the most extremely imbalanced IBM configurations this uncapped weight can exceed 1900, which was found to saturate `CrossEntropyLoss`'s gradient for the positive class and occasionally produce non-finite (NaN) training losses for specific classifier/technique combinations. Every classifier/technique/seed combination on Elliptic, HI-Small, and LI-Small was checked post-fix for non-finite results with none found; all `res/tuned/` results reflect this capped-weight, standardized-feature pipeline.
 - **GATSMOTE's default `--gatsmote-lambda1`/`--gatsmote-lambda2` were tuned on a small, well-scaled synthetic graph**, not on the real IBM/Elliptic data at production scale. A validation attempt against real `hi_small` data produced an unusable result (`loss_node` exploding into the millions) — that explosion is an artifact of the unscaled `Amount Received`/`Amount Paid` features noted in Section 2 (values up to `~2.8e11`), not a property of the loss terms themselves. Revisit these defaults once IBM feature normalization is addressed.
 - **The shortest-path auxiliary loss has limited resolution on real, sparse AML graphs.** On the real HI-Small transaction graph (500k nodes, 631k edges), only a small fraction of candidate/synthetic-parent pairs resolve to a genuine hop count within the default `max_hops=4` cap; the graph is highly fragmented (hundreds of thousands of connected components, a large share of them singleton nodes), so most same-label pairs are in a different, unreachable component from their parent rather than merely far away. The mechanism still grades the resolvable minority correctly and remains directionally correct for the rest, but has low resolution among "far" pairs at this scale purely because of how fragmented the underlying transaction graph is, not because the hop cap is mistuned.
 - **`GraphSAGE`'s neighbor-sampling mini-batch training requires `pyg-lib` or `torch-sparse`** with a working compiled backend for the current platform. Both are listed in `requirements.txt`, but on platforms without prebuilt wheels for them, training silently falls back to full-graph forward passes for GraphSAGE (a warning is printed when this happens).

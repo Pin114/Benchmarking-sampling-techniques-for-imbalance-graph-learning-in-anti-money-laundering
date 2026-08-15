@@ -37,19 +37,26 @@ def _normalize_sampling_name(sampling):
     }
     return mapping.get(sampling, sampling)
 
+# On heavily-imbalanced subsets (e.g. IBM HI-Small, where num_neg/num_pos reaches ~1959.8),
+# an uncapped pos_weight this large can saturate CrossEntropyLoss's gradient for the positive
+# class and contribute to training instability/NaN blowups. Capping trades away some of the
+# nominal class-balance correction for numerical stability -- the standard tradeoff made when
+# extreme inverse-frequency weighting is itself the source of instability, not just the fix for it.
+MAX_POS_WEIGHT = 50.0
+
 def _build_loss_criterion(y_subset, loss_name="ce", loss_kwargs=None, device=None):
     if loss_kwargs is None:
         loss_kwargs = {}
     if loss_name in {None, "ce", "cross_entropy"}:
         num_pos = int((y_subset == 1).sum().item())
         num_neg = int((y_subset == 0).sum().item())
-        pos_weight = float(num_neg) / max(num_pos, 1)
+        pos_weight = min(float(num_neg) / max(num_pos, 1), MAX_POS_WEIGHT)
         weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device)
         return nn.CrossEntropyLoss(weight=weight_tensor)
     if loss_name in {"weighted_ce"}:
         num_pos = int((y_subset == 1).sum().item())
         num_neg = int((y_subset == 0).sum().item())
-        pos_weight = float(num_neg) / max(num_pos, 1)
+        pos_weight = min(float(num_neg) / max(num_pos, 1), MAX_POS_WEIGHT)
         weight_tensor = torch.tensor([1.0, pos_weight], dtype=torch.float32, device=device)
         return nn.CrossEntropyLoss(weight=weight_tensor)
     if loss_name == "focal":
@@ -518,6 +525,9 @@ def node2vec_features(
     model_n2v.eval()
     x = model_n2v()
     x = x.detach().to('cpu')
+    if not torch.isfinite(x).all():
+        n_bad = (~torch.isfinite(x)).sum().item()
+        print(f"WARNING: {n_bad} non-finite values in Node2Vec/DeepWalk embedding output before nan_to_num sanitization -- embedding training may be unstable")
     x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
 
     if active_nodes.any() and active_idx is not None and x.shape[0] != ntw_torch.num_nodes:
@@ -526,6 +536,9 @@ def node2vec_features(
         x = x_full
 
     x_intrinsic = ntw_torch.x.detach().to('cpu')
+    if not torch.isfinite(x_intrinsic).all():
+        n_bad = (~torch.isfinite(x_intrinsic)).sum().item()
+        print(f"WARNING: {n_bad} non-finite values in ntw_torch.x before nan_to_num sanitization -- should not happen given the get_network_torch() assertion; investigate if this fires")
     x_intrinsic = torch.nan_to_num(x_intrinsic, nan=0.0, posinf=1e5, neginf=-1e5)
     if use_intrinsic:
         x = torch.cat((x, x_intrinsic), 1)
@@ -626,6 +639,9 @@ def node2vec_features_with_predictions(
     model_n2v.eval()
     x = model_n2v()
     x = x.detach().to('cpu')
+    if not torch.isfinite(x).all():
+        n_bad = (~torch.isfinite(x)).sum().item()
+        print(f"WARNING: {n_bad} non-finite values in Node2Vec/DeepWalk embedding output before nan_to_num sanitization -- embedding training may be unstable")
     x = torch.nan_to_num(x, nan=0.0, posinf=1e5, neginf=-1e5)
 
     if active_nodes.any() and active_idx is not None and x.shape[0] != ntw_torch.num_nodes:
@@ -634,6 +650,9 @@ def node2vec_features_with_predictions(
         x = x_full
 
     x_intrinsic = ntw_torch.x.detach().to('cpu')
+    if not torch.isfinite(x_intrinsic).all():
+        n_bad = (~torch.isfinite(x_intrinsic)).sum().item()
+        print(f"WARNING: {n_bad} non-finite values in ntw_torch.x before nan_to_num sanitization -- should not happen given the get_network_torch() assertion; investigate if this fires")
     x_intrinsic = torch.nan_to_num(x_intrinsic, nan=0.0, posinf=1e5, neginf=-1e5)
     if use_intrinsic:
         x = torch.cat((x, x_intrinsic), 1)
@@ -799,6 +818,9 @@ def GNN_features(
             criterion = _build_weighted_criterion(y_filtered)
             loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
+            if not torch.isfinite(y_hat).all():
+                n_bad = (~torch.isfinite(y_hat)).sum().item()
+                print(f"WARNING: {n_bad} non-finite values in model output before nan_to_num sanitization -- predictions are unreliable")
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
             cutoff = np.percentile(y_hat.cpu().numpy()[:, 1], percentile_q)
@@ -919,6 +941,9 @@ def GNN_features_with_predictions(
             criterion = _build_weighted_criterion(y_filtered)
             loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
+            if not torch.isfinite(y_hat).all():
+                n_bad = (~torch.isfinite(y_hat)).sum().item()
+                print(f"WARNING: {n_bad} non-finite values in model output before nan_to_num sanitization -- predictions are unreliable")
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
             return {'loss': loss_val, 'ap': ap_score, 'output': y_hat, 'y': y_filtered}
@@ -1107,6 +1132,9 @@ def GNN_features_graphsmote(
             criterion = _build_weighted_criterion(y_filtered)
             loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
+            if not torch.isfinite(y_hat).all():
+                n_bad = (~torch.isfinite(y_hat)).sum().item()
+                print(f"WARNING: {n_bad} non-finite values in model output before nan_to_num sanitization -- predictions are unreliable")
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
             cutoff = np.percentile(y_hat.cpu().numpy()[:, 1], percentile_q)
@@ -1229,6 +1257,9 @@ def GNN_features_graphsmote_with_predictions(
             criterion = _build_weighted_criterion(y_filtered)
             loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
+            if not torch.isfinite(y_hat).all():
+                n_bad = (~torch.isfinite(y_hat)).sum().item()
+                print(f"WARNING: {n_bad} non-finite values in model output before nan_to_num sanitization -- predictions are unreliable")
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
             return {'loss': loss_val, 'ap': ap_score, 'output': y_hat, 'y': y_filtered}
@@ -1462,6 +1493,9 @@ def GNN_features_graphens_with_predictions(
             criterion = _build_weighted_criterion(y_filtered)
             loss_val = _compute_loss(criterion, out_filtered, y_filtered).item()
             y_hat = out_filtered.softmax(dim=1)
+            if not torch.isfinite(y_hat).all():
+                n_bad = (~torch.isfinite(y_hat)).sum().item()
+                print(f"WARNING: {n_bad} non-finite values in model output before nan_to_num sanitization -- predictions are unreliable")
             y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=1.0, neginf=0.0)
             ap_score = average_precision_score(y_filtered.cpu().numpy(), y_hat.cpu().numpy()[:, 1])
             return {'loss': loss_val, 'ap': ap_score, 'output': y_hat, 'y': y_filtered}

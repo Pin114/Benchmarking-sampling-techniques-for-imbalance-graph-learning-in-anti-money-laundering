@@ -148,6 +148,12 @@ class network_AML():
         if self.test_mask is not None:
             data.test_mask = torch.tensor(self.test_mask, dtype=torch.bool)
 
+        assert torch.isfinite(data.x).all(), (
+            f"network_AML.get_network_torch() produced non-finite values in x for network '{self.name}' "
+            "-- check for NaN/Inf in the raw feature columns (e.g. unparseable timestamps propagating into "
+            "derived Day/Hour/Minute columns) before this point."
+        )
+
         return data
 
 
