@@ -13,10 +13,8 @@ The full experimental writeup, including per-dataset result tables and the inter
 Across five datasets (real-world Elliptic, synthetic IBM HI-Small/HI-Medium/LI-Small/LI-Medium), eight learning algorithms, up to six sampling techniques, and a numerical target-ratio grid, no single sampling technique or target ratio was best across the board. The central conclusion is that the effectiveness of resampling in imbalanced graph learning is shaped by the interaction between dataset regime, representation model, graph topology, and target ratio, rather than being an intrinsic property of the sampling technique alone:
 
 - **Elliptic (native imbalance ≈ 8.2:1, training split):** the Intrinsic feature-based classifier is the strongest baseline, indicating local transaction features already carry substantial signal without graph resampling. Most classifiers improve with at least one sampling technique at its best ratio; Node2Vec is the one exception, where the original distribution beats every resampled configuration. Best-performing ratios are spread across the full grid rather than concentrated at 1:1. Among graph-aware techniques, TNU (Targeted Neighbourhood Undersampling) is the strongest choice for 3 of 4 GNN architectures.
-- **IBM datasets (native imbalance ≈ 115:1 to 937:1):** baseline performance is much weaker than Elliptic, and some techniques (notably GraphENS) can produce large mean AUC-PRC gains, but frequently with a standard deviation comparable to or larger than the mean itself across seeds — this instability is treated as a genuine finding, not noise to average away. No technique dominates: across 12 (classifier, dataset) GNN combinations, RUS is best in 5, GraphSMOTE and GATSMOTE in 3 each, TNU in 1, and GraphENS in 0 (despite sometimes improving substantially over baseline in specific configurations).
-- **Operational thresholds ($F_{1,90}$ vs. $F_{1,99}$):** threshold-independent AUC-PRC and alert-budget-constrained $F_1$ do not always agree. On Elliptic and IBM HI-Medium, performance declines when moving to a stricter 1% alert budget; on the more extremely imbalanced HI-Small and LI-Small, this reverses for most GNN architectures. The direction appears graded with native imbalance severity, so operational threshold behaviour needs to be checked explicitly per deployment rather than inferred from AUC-PRC alone.
-
-IBM LI-Medium is still completing its full sampling-ratio sweep as of this writing; its results will be added once all seeds finish.
+- **IBM datasets (native imbalance ≈ 115:1 to 937:1):** baseline performance is much weaker than Elliptic, and some techniques (notably GraphENS) can produce large mean AUC-PRC gains, but frequently with a standard deviation comparable to or larger than the mean itself across seeds — this instability is treated as a genuine finding, not noise to average away. No technique dominates: across 16 (classifier, dataset) GNN combinations, RUS and GraphSMOTE are each best in 5, GATSMOTE in 4, TNU in 2, and GraphENS in 0 (despite sometimes improving substantially over baseline in specific configurations).
+- **Operational thresholds ($F_{1,90}$ vs. $F_{1,99}$):** threshold-independent AUC-PRC and alert-budget-constrained $F_1$ do not always agree. On Elliptic and IBM HI-Medium, performance declines when moving to a stricter 1% alert budget; on IBM LI-Medium, HI-Small, and LI-Small, this reverses for most GNN architectures. The direction appears graded with native imbalance severity — the transition falls somewhere between HI-Medium's ≈115:1 and LI-Medium's ≈522:1 — so operational threshold behaviour needs to be checked explicitly per deployment rather than inferred from AUC-PRC alone.
 
 ---
 
@@ -166,7 +164,7 @@ python scripts/train_supervised_tuned.py --network hi_small --loss focal --focal
 ```
 
 ### Note on imbalance ratios
-The tuning grid supports: `1:1, 1:2, 1:5, 1:10, 1:20, 1:50, 1:100, 1:200, 1:500, 1:1000, 1:2000`, plus an "Original" (untouched) row. When a ratio is infeasible for a dataset/split, the script will log a warning and skip that configuration.
+The tuning grid supports: `1:1, 1:2, 1:5, 1:10, 1:20, 1:50, 1:100, 1:500, 1:1000`, plus an "Original" (untouched) row. When a ratio is infeasible for a dataset/split, the script will log a warning and skip that configuration.
 
 ## GATSMOTE (trainable multi-head attention edge generator)
 
