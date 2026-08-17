@@ -164,7 +164,7 @@ python scripts/train_supervised_tuned.py --network hi_small --loss focal --focal
 ```
 
 ### Note on imbalance ratios
-The tuning grid supports: `1:1, 1:2, 1:5, 1:10, 1:20, 1:50, 1:100, 1:200, 1:500, 1:1000, 1:2000`, plus an "Original" (untouched) row. When a ratio is infeasible for a dataset/split, the script will log a warning and skip that configuration.
+The tuning grid supports: `1:1, 1:2, 1:5, 1:10, 1:20, 1:50, 1:100, 1:500, 1:1000`, plus an "Original" (untouched) row. When a ratio is infeasible for a dataset/split, the script will log a warning and skip that configuration.
 
 ## GATSMOTE (trainable multi-head attention edge generator)
 
